@@ -27,9 +27,9 @@ pub struct GuildScoreboard {
 }
 
 #[derive(Debug)]
-struct Scoreboard {
-    user_scoreboards: UserScoreboard,
-    guild_scoreboards: GuildScoreboard,
+pub struct Scoreboard {
+    pub user_scoreboards: UserScoreboard,
+    pub guild_scoreboards: GuildScoreboard,
 }
 
 impl TryFrom<DbUserScoreboard> for UserScoreboard {
