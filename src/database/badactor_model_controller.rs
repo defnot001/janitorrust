@@ -112,6 +112,17 @@ impl BadActorModelController {
         .try_into()
     }
 
+    pub async fn has_active_case(db_pool: &PgPool, user_id: UserId) -> bool {
+        sqlx::query_as::<_, DbBadActor>(
+            "SELECT * FROM badactors WHERE user_id = $1 AND is_active = true;",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(db_pool)
+        .await
+        .map(|db_bad_actor| db_bad_actor.is_some())
+        .unwrap_or(false)
+    }
+
     pub async fn get_by_user_id(
         db_pool: &PgPool,
         user_id: UserId,
@@ -215,5 +226,63 @@ impl BadActorModelController {
             .into_iter()
             .map(|db_bad_actor| BadActor::try_from(db_bad_actor))
             .collect::<Result<Vec<BadActor>, _>>()
+    }
+
+    pub async fn delete(pg_pool: &PgPool, id: u64) -> anyhow::Result<BadActor> {
+        sqlx::query_as::<_, DbBadActor>("DELETE FROM bad_actors WHERE id = $1 RETURNING *;")
+            .bind(id as i64)
+            .fetch_one(pg_pool)
+            .await?
+            .try_into()
+    }
+
+    pub async fn update_screenshot(
+        pg_pool: &PgPool,
+        id: u64,
+        updating_user: UserId,
+        screenshot_path: impl Into<String>,
+    ) -> anyhow::Result<BadActor> {
+        sqlx::query_as::<_, DbBadActor>(
+            r#"
+            UPDATE bad_actors 
+            SET 
+                screenshot_proof = $2, 
+                last_changed_by = $3, 
+                updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $1 
+            RETURNING *;
+            "#,
+        )
+        .bind(id as i64)
+        .bind(screenshot_path.into())
+        .bind(updating_user.to_string())
+        .fetch_one(pg_pool)
+        .await?
+        .try_into()
+    }
+
+    pub async fn update_explanation(
+        pg_pool: &PgPool,
+        id: u64,
+        updating_user: UserId,
+        explanation: impl Into<String>,
+    ) -> anyhow::Result<BadActor> {
+        sqlx::query_as::<_, DbBadActor>(
+            r#"
+            UPDATE bad_actors 
+            SET 
+                explanation = $2, 
+                last_changed_by = $3, 
+                updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $1 
+            RETURNING *;
+            "#,
+        )
+        .bind(id as i64)
+        .bind(explanation.into())
+        .bind(updating_user.to_string())
+        .fetch_one(pg_pool)
+        .await?
+        .try_into()
     }
 }
