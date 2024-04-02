@@ -80,7 +80,7 @@ pub enum BadActorQueryType {
     Inactive,
 }
 
-struct BadActorModelController;
+pub struct BadActorModelController;
 
 impl BadActorModelController {
     pub async fn create(

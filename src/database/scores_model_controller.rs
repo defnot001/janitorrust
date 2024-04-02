@@ -54,7 +54,7 @@ impl TryFrom<DbGuildScoreboard> for GuildScoreboard {
     }
 }
 
-struct ScoresModelController;
+pub struct ScoresModelController;
 
 impl ScoresModelController {
     pub async fn create_or_increase_scoreboards(
