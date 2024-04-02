@@ -2,20 +2,20 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use serenity::all::UserId;
-use sqlx::{prelude::FromRow, PgPool};
+use sqlx::{FromRow, PgPool};
 
 use crate::util::parse_snowflake;
 
 #[derive(Debug, FromRow)]
-pub struct DbAdmin {
+struct DbAdmin {
     id: String,
     created_at: DateTime<Utc>,
 }
 
 #[derive(Debug)]
 pub struct Admin {
-    id: UserId,
-    created_at: DateTime<Utc>,
+    pub id: UserId,
+    pub created_at: DateTime<Utc>,
 }
 
 impl TryFrom<DbAdmin> for Admin {
