@@ -1,5 +1,6 @@
 #![allow(dead_code, unused)]
 
+mod builders;
 mod commands;
 mod config;
 mod database;
