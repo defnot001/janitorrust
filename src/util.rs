@@ -1,7 +1,24 @@
 use std::{num::NonZeroU64, str::FromStr};
 
+use serenity::all::{CacheHttp, User, UserId};
+
 pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
     NonZeroU64::from_str(snowflake.into().as_str()).map_err(|err| anyhow::Error::new(err))
+}
+
+pub async fn get_users(
+    user_ids: Vec<UserId>,
+    cache_http: &impl CacheHttp,
+) -> anyhow::Result<Vec<User>> {
+    let mut users = Vec::new();
+
+    for user_id in user_ids {
+        let user = user_id.to_user(cache_http).await?;
+
+        users.push(user);
+    }
+
+    Ok(users)
 }
 
 #[cfg(test)]

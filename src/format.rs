@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use serenity::all::{PartialGuild, User};
+use serenity::all::{Channel, PartialGuild, User};
 
 pub trait HasNameAndID {
     fn name(&self) -> &str;
@@ -24,6 +24,16 @@ impl HasNameAndID for PartialGuild {
 
     fn name(&self) -> &str {
         &self.name
+    }
+}
+
+impl HasNameAndID for Channel {
+    fn id(&self) -> Cow<str> {
+        self.id().to_string().into()
+    }
+
+    fn name(&self) -> &str {
+        &self.name()
     }
 }
 
