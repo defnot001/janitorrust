@@ -126,7 +126,7 @@ impl UserModelController {
         Ok(users)
     }
 
-    pub async fn get_by_guild(db_pool: &PgPool, guild_id: GuildId) -> anyhow::Result<Vec<User>> {
+    pub async fn get_by_guild(db_pool: &PgPool, guild_id: &GuildId) -> anyhow::Result<Vec<User>> {
         let db_users =
             sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(servers) LIMIT $2;")
                 .bind(guild_id.to_string())
