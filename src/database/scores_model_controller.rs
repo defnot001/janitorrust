@@ -1,4 +1,3 @@
-use anyhow::Context;
 use serenity::all::{GuildId, UserId};
 use sqlx::{prelude::FromRow, PgPool};
 
@@ -88,7 +87,7 @@ impl ScoresModelController {
         .fetch_one(db_pool)
         .await;
 
-        if !user_scoreboards.is_ok() || !guild_scoreboards.is_ok() {
+        if user_scoreboards.is_err() || guild_scoreboards.is_err() {
             sqlx::query("ROLLBACK").execute(db_pool).await?;
             return Err(anyhow::anyhow!("Failed to create or increase scoreboards"));
         }

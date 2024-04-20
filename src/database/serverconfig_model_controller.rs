@@ -1,14 +1,41 @@
+use std::fmt::Display;
+
 use chrono::{DateTime, Utc};
-use serenity::all::{ChannelId, GuildId, RoleId, UserId};
+use poise::serenity_prelude as serenity;
+use serenity::{
+    ChannelId, CreateEmbed, GuildId, PartialGuild, RoleId, User as SerenityUser, UserId,
+};
 use sqlx::{prelude::FromRow, PgPool};
 
-#[derive(Debug)]
+use super::user_model_controller::UserModelController;
+
+use crate::{
+    util::{
+        builders::create_default_embed,
+        format::{display_time, inline_code, Mentionable},
+    },
+    Context as AppContext,
+};
+
+#[derive(Debug, Clone)]
 pub enum ActionLevel {
     Notify,
     Timeout,
     Kick,
     SoftBan,
     Ban,
+}
+
+impl Display for ActionLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Notify => write!(f, "Notify"),
+            Self::Timeout => write!(f, "Timeout"),
+            Self::Kick => write!(f, "Kick"),
+            Self::SoftBan => write!(f, "SoftBan"),
+            Self::Ban => write!(f, "Ban"),
+        }
+    }
 }
 
 fn stringify_action_level(level: ActionLevel) -> String {
@@ -47,7 +74,7 @@ struct DbServerConfig {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub server_id: GuildId,
     pub log_channel: Option<ChannelId>,
@@ -63,9 +90,93 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug)]
-pub struct ServerConfigWithUserIds {
+pub struct ServerConfigComplete {
+    pub guild: PartialGuild,
     pub server_config: ServerConfig,
-    pub user_ids: Vec<UserId>,
+    pub users: Vec<UserId>,
+}
+
+impl ServerConfigComplete {
+    pub async fn from_server_config(
+        server_config: ServerConfig,
+        db_pool: &PgPool,
+        ctx: &AppContext<'_>,
+    ) -> anyhow::Result<Self> {
+        let users = UserModelController::get_by_guild(db_pool, &server_config.server_id)
+            .await?
+            .into_iter()
+            .map(|u| u.id)
+            .collect::<Vec<UserId>>();
+
+        let guild = server_config.server_id.to_partial_guild(ctx).await?;
+
+        Ok(Self {
+            guild,
+            server_config,
+            users,
+        })
+    }
+
+    pub fn to_embed(&self, interaction_user: &SerenityUser) -> CreateEmbed {
+        let server_id = inline_code(self.guild.id.to_string());
+
+        let guild_users = self
+            .users
+            .iter()
+            .map(|u| format!("<@{}>", u))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let log_channel = if let Some(channel_id) = self.server_config.log_channel {
+            channel_id.mention()
+        } else {
+            String::from("Not set.")
+        };
+
+        let ping_role = if let Some(role_id) = self.server_config.ping_role {
+            role_id.mention()
+        } else {
+            String::from("Not set.")
+        };
+
+        let spam = self.server_config.spam_action_level.to_string();
+        let impersonation = self.server_config.impersonation_action_level.to_string();
+        let bigotry = self.server_config.bigotry_action_level.to_string();
+
+        let timeout = if self.server_config.timeout_users_with_role {
+            "Enabled"
+        } else {
+            "Disabled"
+        };
+
+        let ignored_roles = if self.server_config.ignored_roles.is_empty() {
+            String::from("None set.")
+        } else {
+            self.server_config
+                .ignored_roles
+                .iter()
+                .map(|r| r.mention())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let created_at = display_time(self.server_config.created_at);
+        let updated_at = display_time(self.server_config.updated_at);
+
+        create_default_embed(interaction_user)
+            .title(format!("Server Config for {}", &self.guild.name))
+            .field("Server ID", server_id, false)
+            .field("Whitelisted Admins", guild_users, false)
+            .field("Log Channel", log_channel, false)
+            .field("Ping Role", ping_role, false)
+            .field("Spam Action Level", spam, false)
+            .field("Impersonation Action Level", impersonation, false)
+            .field("Bigotry Action Level", bigotry, false)
+            .field("Timeout Users With Role", timeout, false)
+            .field("Ignored Roles", ignored_roles, false)
+            .field("Created At", created_at, false)
+            .field("Updated At", updated_at, false)
+    }
 }
 
 pub struct UpdateServerConfig {
@@ -137,9 +248,9 @@ impl ServerConfigModelController {
     ) -> anyhow::Result<ServerConfig> {
         sqlx::query_as::<_, DbServerConfig>(
             r#"
-            INSERT INTO server_configs (server_id) 
-            VALUES ($1) 
-            ON CONFLICT (server_id) DO NOTHING 
+            INSERT INTO server_configs (server_id)
+            VALUES ($1)
+            ON CONFLICT (server_id) DO NOTHING
             RETURNING *;
             "#,
         )
@@ -267,17 +378,17 @@ impl ServerConfigModelController {
 
         sqlx::query_as::<_, DbServerConfig>(
             r#"
-            UPDATE server_configs 
-            SET log_channel = $2, 
-                ping_users = $3, 
-                ping_role = $4, 
-                spam_action_level = $5, 
-                impersonation_action_level = $6, 
-                bigotry_action_level = $7, 
-                timeout_users_with_role = $8, 
-                ignored_roles = $9, 
-                updated_at = now() 
-            WHERE server_id = $1 
+            UPDATE server_configs
+            SET log_channel = $2,
+                ping_users = $3,
+                ping_role = $4,
+                spam_action_level = $5,
+                impersonation_action_level = $6,
+                bigotry_action_level = $7,
+                timeout_users_with_role = $8,
+                ignored_roles = $9,
+                updated_at = now()
+            WHERE server_id = $1
             RETURNING *;
             "#,
         )

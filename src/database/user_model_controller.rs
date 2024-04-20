@@ -128,9 +128,8 @@ impl UserModelController {
 
     pub async fn get_by_guild(db_pool: &PgPool, guild_id: &GuildId) -> anyhow::Result<Vec<User>> {
         let db_users =
-            sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(servers) LIMIT $2;")
+            sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(servers) LIMIT 10;")
                 .bind(guild_id.to_string())
-                .bind(10 as i16)
                 .fetch_all(db_pool)
                 .await?;
 

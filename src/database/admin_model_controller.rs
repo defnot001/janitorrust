@@ -4,8 +4,6 @@ use chrono::{DateTime, Utc};
 use serenity::all::UserId;
 use sqlx::{FromRow, PgPool};
 
-use crate::util::parse_snowflake;
-
 #[derive(Debug, FromRow)]
 struct DbAdmin {
     id: String,
@@ -39,7 +37,7 @@ impl AdminModelController {
             .fetch_all(db_pool)
             .await?
             .into_iter()
-            .map(|db_admin| Admin::try_from(db_admin))
+            .map(Admin::try_from)
             .collect::<Result<Vec<Admin>, _>>()
     }
 
@@ -48,7 +46,7 @@ impl AdminModelController {
             .bind(id.to_string())
             .fetch_optional(db_pool)
             .await?
-            .map(|db_admin| Admin::try_from(db_admin))
+            .map(Admin::try_from)
             .transpose()
     }
 
