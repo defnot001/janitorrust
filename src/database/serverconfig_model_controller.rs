@@ -260,17 +260,20 @@ impl ServerConfigModelController {
         .map(ServerConfig::try_from)?
     }
 
+    /// Gets a guilds's [ServerConfig] by its [GuildId] from the database.
     pub async fn get_by_guild_id(
         pg_pool: &PgPool,
         guild_id: GuildId,
-    ) -> anyhow::Result<ServerConfig> {
+    ) -> anyhow::Result<Option<ServerConfig>> {
         sqlx::query_as::<_, DbServerConfig>("SELECT * FROM server_configs WHERE server_id = $1;")
             .bind(guild_id.to_string())
-            .fetch_one(pg_pool)
-            .await
-            .map(ServerConfig::try_from)?
+            .fetch_optional(pg_pool)
+            .await?
+            .map(ServerConfig::try_from)
+            .transpose()
     }
 
+    /// Gets multiple guild's [ServerConfig]s by their [GuildId]s from the database.
     pub async fn get_multiple_by_guild_id(
         pg_pool: &PgPool,
         guild_ids: Vec<GuildId>,
