@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
-use serenity::all::{GuildId, UserId};
+use poise::serenity_prelude as serenity;
+use serenity::{GuildId, User as SerenityUser, UserId};
 use sqlx::{FromRow, PgPool};
+
+use crate::Context as AppContext;
 
 #[derive(Debug, FromRow)]
 struct DbBadActor {
@@ -25,7 +28,7 @@ pub enum BadActorType {
 
 #[derive(Debug)]
 pub struct BadActor {
-    pub id: u64,
+    pub id: i64,
     pub user_id: UserId,
     pub is_active: bool,
     pub actor_type: BadActorType,
@@ -35,6 +38,12 @@ pub struct BadActor {
     pub updated_at: DateTime<Utc>,
     pub originally_created_in: GuildId,
     pub last_changed_by: UserId,
+}
+
+impl BadActor {
+    pub async fn user(&self, ctx: &AppContext<'_>) -> Option<SerenityUser> {
+        self.user_id.to_user(ctx).await.ok()
+    }
 }
 
 impl TryFrom<DbBadActor> for BadActor {
@@ -49,7 +58,7 @@ impl TryFrom<DbBadActor> for BadActor {
         };
 
         Ok(BadActor {
-            id: db_bad_actor.id as u64,
+            id: db_bad_actor.id,
             user_id: UserId::from(db_bad_actor.user_id.parse::<u64>()?),
             is_active: db_bad_actor.is_active,
             actor_type,
@@ -132,7 +141,7 @@ impl BadActorModelController {
             .fetch_all(db_pool)
             .await?
             .into_iter()
-            .map(|db_bad_actor| BadActor::try_from(db_bad_actor))
+            .map(BadActor::try_from)
             .collect::<Result<Vec<BadActor>, _>>()
     }
 
@@ -141,7 +150,7 @@ impl BadActorModelController {
             .bind(id as i64)
             .fetch_optional(db_pool)
             .await?
-            .map(|db_bad_actor| BadActor::try_from(db_bad_actor))
+            .map(BadActor::try_from)
             .transpose()
     }
 
@@ -153,13 +162,13 @@ impl BadActorModelController {
     ) -> anyhow::Result<BadActor> {
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            UPDATE bad_actors 
-            SET 
-                is_active = false, 
-                explanation = $2, 
-                last_changed_by = $3, 
-                updated_at = CURRENT_TIMESTAMP 
-            WHERE id = $1 
+            UPDATE bad_actors
+            SET
+                is_active = false,
+                explanation = $2,
+                last_changed_by = $3,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
             RETURNING *;
             "#,
         )
@@ -179,13 +188,13 @@ impl BadActorModelController {
     ) -> anyhow::Result<BadActor> {
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            UPDATE bad_actors 
-            SET 
-                is_active = true, 
-                explanation = $2, 
-                last_changed_by = $3, 
-                updated_at = CURRENT_TIMESTAMP 
-            WHERE id = $1 
+            UPDATE bad_actors
+            SET
+                is_active = true,
+                explanation = $2,
+                last_changed_by = $3,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
             RETURNING *;
             "#,
         )
@@ -224,7 +233,7 @@ impl BadActorModelController {
             .fetch_all(db_pool)
             .await?
             .into_iter()
-            .map(|db_bad_actor| BadActor::try_from(db_bad_actor))
+            .map(BadActor::try_from)
             .collect::<Result<Vec<BadActor>, _>>()
     }
 
@@ -244,12 +253,12 @@ impl BadActorModelController {
     ) -> anyhow::Result<BadActor> {
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            UPDATE bad_actors 
-            SET 
-                screenshot_proof = $2, 
-                last_changed_by = $3, 
-                updated_at = CURRENT_TIMESTAMP 
-            WHERE id = $1 
+            UPDATE bad_actors
+            SET
+                screenshot_proof = $2,
+                last_changed_by = $3,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
             RETURNING *;
             "#,
         )
@@ -269,12 +278,12 @@ impl BadActorModelController {
     ) -> anyhow::Result<BadActor> {
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            UPDATE bad_actors 
-            SET 
-                explanation = $2, 
-                last_changed_by = $3, 
-                updated_at = CURRENT_TIMESTAMP 
-            WHERE id = $1 
+            UPDATE bad_actors
+            SET
+                explanation = $2,
+                last_changed_by = $3,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
             RETURNING *;
             "#,
         )
