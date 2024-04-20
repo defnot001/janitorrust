@@ -1,9 +1,9 @@
 use std::{num::NonZeroU64, str::FromStr};
 
-use serenity::all::{CacheHttp, User, UserId};
+use serenity::all::{CacheHttp, CreateEmbed, PartialGuild, User, UserId};
 
 pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
-    NonZeroU64::from_str(snowflake.into().as_str()).map_err(|err| anyhow::Error::new(err))
+    NonZeroU64::from_str(snowflake.into().as_str()).map_err(anyhow::Error::new)
 }
 
 pub async fn get_users(
@@ -38,5 +38,13 @@ mod tests {
         let parsed = parse_snowflake("0");
 
         assert!(parsed.is_err());
+    }
+}
+
+pub fn maybe_set_guild_thumbnail(embed: CreateEmbed, guild: &PartialGuild) -> CreateEmbed {
+    if let Some(url) = guild.icon_url() {
+        embed.thumbnail(url)
+    } else {
+        embed
     }
 }

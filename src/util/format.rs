@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use serenity::all::{Channel, PartialGuild, User};
+use serenity::all::{ChannelId, PartialGuild, RoleId, User, UserId};
 
 pub trait HasNameAndID {
     fn name(&self) -> &str;
@@ -27,13 +27,25 @@ impl HasNameAndID for PartialGuild {
     }
 }
 
-impl HasNameAndID for Channel {
-    fn id(&self) -> Cow<str> {
-        self.id().to_string().into()
-    }
+pub trait Mentionable {
+    fn mention(&self) -> String;
+}
 
-    fn name(&self) -> &str {
-        &self.name()
+impl Mentionable for UserId {
+    fn mention(&self) -> String {
+        format!("<@{}>", self)
+    }
+}
+
+impl Mentionable for RoleId {
+    fn mention(&self) -> String {
+        format!("<@&{}", self)
+    }
+}
+
+impl Mentionable for ChannelId {
+    fn mention(&self) -> String {
+        format!("<#{}>", self)
     }
 }
 
@@ -53,8 +65,8 @@ pub fn inline_code(input: impl Into<String>) -> String {
     format!("`{}`", input.into())
 }
 
-pub fn user_mention(user: &User) -> String {
-    format!("<@{}>", user.id)
+pub fn user_mention(user: &UserId) -> String {
+    format!("<@{}>", user)
 }
 
 pub fn escape_markdown(input: impl Into<String>) -> String {
@@ -84,6 +96,14 @@ pub fn time(date_time: chrono::DateTime<chrono::Utc>, style: TimestampStyle) -> 
         TimestampStyle::LongDateTime => format!("<t:{timestamp}:F>"),
         TimestampStyle::Relative => format!("<t:{timestamp}:R>"),
     }
+}
+
+pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
+    format!(
+        "{}\n{}",
+        time(date_time, TimestampStyle::LongDate),
+        time(date_time, TimestampStyle::Relative)
+    )
 }
 
 pub enum TimestampStyle {
