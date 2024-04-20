@@ -1,19 +1,21 @@
 #![allow(dead_code, unused)]
 
-mod builders;
 mod commands;
-mod config;
 mod database;
-mod format;
 mod util;
 
-use ::serenity::all::InteractionType;
 use commands::adminconfig;
 use poise::serenity_prelude as serenity;
+use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
+
+use util::config::Config;
+use util::error;
+use util::format::display;
 
 pub struct Data {
     pub db_pool: sqlx::PgPool,
+    pub config: Config,
 }
 pub type Context<'a> = poise::Context<'a, Data, anyhow::Error>;
 
@@ -22,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(tracing_subscriber::fmt().compact().finish())?;
     tracing::info!("Successfully set up logging!");
 
-    let config = config::Config::load()?;
+    let config = Config::load()?;
     tracing::info!("Successfully loaded config!");
 
     let db_pool = PgPoolOptions::new()
@@ -32,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Successfully connected to the database!");
 
     let intents = serenity::GatewayIntents::GUILDS | serenity::GatewayIntents::GUILD_MODERATION;
+    let token = config.bot_token.clone();
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -39,17 +42,24 @@ async fn main() -> anyhow::Result<()> {
             event_handler: |ctx, event, framework, _data| {
                 Box::pin(event_handler(ctx, event, framework))
             },
+            on_error: |error| {
+                Box::pin(async move {
+                    error::error_handler(error)
+                        .await
+                        .expect("Failed to recover from error!");
+                })
+            },
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data { db_pool })
+                Ok(Data { db_pool, config })
             })
         })
         .build();
 
-    let client = serenity::ClientBuilder::new(config.bot_token, intents)
+    let client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
         .await;
 
@@ -84,9 +94,9 @@ async fn event_handler(
                         Ok(partial_guild) => {
                             let message = format!(
                                 "{} used /{} in {}",
-                                format::display(&command.user),
+                                display(&command.user),
                                 command.data.name,
-                                format::display(&partial_guild)
+                                display(&partial_guild)
                             );
 
                             tracing::info!(message);
@@ -98,7 +108,7 @@ async fn event_handler(
                     None => {
                         let message = format!(
                             "{} used /{} outside of a guild.",
-                            format::display(&command.user),
+                            display(&command.user),
                             command.data.name,
                         );
 
