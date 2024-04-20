@@ -4,7 +4,7 @@ mod commands;
 mod database;
 mod util;
 
-use commands::adminconfig;
+use commands::{adminconfig, adminlist};
 use poise::serenity_prelude as serenity;
 use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![adminconfig::adminconfig()],
+            commands: vec![adminconfig::adminconfig(), adminlist::adminlist()],
             event_handler: |ctx, event, framework, _data| {
                 Box::pin(event_handler(ctx, event, framework))
             },
