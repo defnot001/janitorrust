@@ -1,6 +1,6 @@
 use serenity::all::GuildId;
 
-use crate::Context;
+use crate::{database::serverconfig_model_controller::ServerConfigComplete, Context};
 
 /// Subcommands for admins to inspect the bot's server configs.
 #[poise::command(
@@ -69,4 +69,68 @@ async fn delete_bad_actor(ctx: Context<'_>) -> anyhow::Result<()> {
     ctx.defer().await?;
     ctx.say("You invoked the second child command!").await?;
     Ok(())
+}
+
+async fn build_server_config_embed(
+    config: ServerConfigComplete,
+    ctx: &Context<'_>,
+) -> anyhow::Result<CreateEmbed> {
+    let Ok(guild) = config.server_config.server_id.to_partial_guild(&ctx).await else {
+        return Err(anyhow::anyhow!(
+            "Failed to retrieve guild with id {} from the API!",
+            config.server_config.server_id,
+        ));
+    };
+
+    let Ok(config_users) = UserModelController::get_by_guild(&ctx.data().db_pool, &guild.id).await
+    else {
+        return Err(anyhow::anyhow!(
+            "Failed to retrieve users for {} from the database!",
+            display(&guild),
+        ));
+    };
+
+    let user_ids = config_users.iter().map(|user| user.id).collect::<Vec<_>>();
+
+    let Ok(discord_users) = get_users(user_ids, &ctx).await else {
+        return Err(anyhow::anyhow!(
+            "Failed to retrieve users for {} from the API!",
+            display(&guild),
+        ));
+    };
+
+    let log_channel = if let Some(channel_id) = config.server_config.log_channel {
+        let Ok(channel) = channel_id.to_channel(&ctx).await else {
+            return Err(anyhow::anyhow!(
+                "Failed to retrieve log channel with id {} from the API!",
+                channel_id,
+            ));
+        };
+
+        Some(channel)
+    } else {
+        None
+    };
+
+    let mut embed = create_default_embed(ctx)
+        .title(format!("Server Config for {}", &guild.name))
+        .field("Server ID", inline_code(&guild.id.to_string()), false)
+        .field(
+            "Whitelisted Admins",
+            discord_users
+                .into_iter()
+                .map(|user| fdisplay(&user))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            false,
+        )
+        .field(
+            "Log Channel",
+            log_channel
+                .map(|channel| fdisplay(&channel))
+                .unwrap_or_else(|| "Not set".to_string()),
+            false,
+        );
+
+    Ok(embed)
 }
