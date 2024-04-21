@@ -1,5 +1,9 @@
-use serenity::all::{GuildId, UserId};
+use std::num::NonZeroU64;
+
+use serenity::all::{CreateEmbed, GuildId, User, UserId};
 use sqlx::{prelude::FromRow, PgPool};
+
+use crate::util::builders::create_default_embed;
 
 #[derive(Debug, FromRow)]
 struct DbUserScoreboard {
@@ -14,43 +18,43 @@ struct DbGuildScoreboard {
 }
 
 #[derive(Debug)]
-pub struct UserScoreboard {
-    pub discord_id: UserId,
-    pub score: u32,
-}
-
-#[derive(Debug)]
-pub struct GuildScoreboard {
-    pub discord_id: UserId,
-    pub score: u32,
-}
-
-#[derive(Debug)]
 pub struct Scoreboard {
-    pub user_scoreboards: UserScoreboard,
-    pub guild_scoreboards: GuildScoreboard,
+    pub discord_id: NonZeroU64,
+    pub score: u32,
 }
 
-impl TryFrom<DbUserScoreboard> for UserScoreboard {
+impl TryFrom<DbUserScoreboard> for Scoreboard {
     type Error = anyhow::Error;
 
     fn try_from(db_user_scoreboard: DbUserScoreboard) -> Result<Self, Self::Error> {
-        Ok(UserScoreboard {
-            discord_id: UserId::from(db_user_scoreboard.discord_id.parse::<u64>()?),
+        let non_zero = NonZeroU64::new(db_user_scoreboard.discord_id.parse::<u64>()?)
+            .ok_or(anyhow::anyhow!("0 is not a valid snowflake"))?;
+
+        Ok(Scoreboard {
+            discord_id: non_zero,
             score: db_user_scoreboard.score as u32,
         })
     }
 }
 
-impl TryFrom<DbGuildScoreboard> for GuildScoreboard {
+impl TryFrom<DbGuildScoreboard> for Scoreboard {
     type Error = anyhow::Error;
 
     fn try_from(db_guild_scoreboard: DbGuildScoreboard) -> Result<Self, Self::Error> {
-        Ok(GuildScoreboard {
-            discord_id: UserId::from(db_guild_scoreboard.discord_id.parse::<u64>()?),
+        let non_zero = NonZeroU64::new(db_guild_scoreboard.discord_id.parse::<u64>()?)
+            .ok_or(anyhow::anyhow!("0 is not a valid snowflake"))?;
+
+        Ok(Scoreboard {
+            discord_id: non_zero,
             score: db_guild_scoreboard.score as u32,
         })
     }
+}
+
+#[derive(Debug)]
+pub struct AllScoreboards {
+    pub user_scoreboards: Scoreboard,
+    pub guild_scoreboards: Scoreboard,
 }
 
 pub struct ScoresModelController;
@@ -60,7 +64,7 @@ impl ScoresModelController {
         db_pool: &PgPool,
         user_id: UserId,
         guild_id: GuildId,
-    ) -> anyhow::Result<Scoreboard> {
+    ) -> anyhow::Result<AllScoreboards> {
         sqlx::query("BEGIN").execute(db_pool).await?;
 
         let user_scoreboards = sqlx::query_as::<_, DbUserScoreboard>(
@@ -94,13 +98,13 @@ impl ScoresModelController {
 
         sqlx::query("COMMIT").execute(db_pool).await?;
 
-        Ok(Scoreboard {
-            user_scoreboards: UserScoreboard::try_from(user_scoreboards.unwrap())?,
-            guild_scoreboards: GuildScoreboard::try_from(guild_scoreboards.unwrap())?,
+        Ok(AllScoreboards {
+            user_scoreboards: Scoreboard::try_from(user_scoreboards.unwrap())?,
+            guild_scoreboards: Scoreboard::try_from(guild_scoreboards.unwrap())?,
         })
     }
 
-    pub async fn get_top_users(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<UserScoreboard>> {
+    pub async fn get_top_users(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<Scoreboard>> {
         sqlx::query_as::<_, DbUserScoreboard>(
             r#"
             SELECT * FROM user_scores
@@ -112,14 +116,11 @@ impl ScoresModelController {
         .fetch_all(db_pool)
         .await?
         .into_iter()
-        .map(UserScoreboard::try_from)
-        .collect::<Result<Vec<UserScoreboard>, _>>()
+        .map(Scoreboard::try_from)
+        .collect::<Result<Vec<Scoreboard>, _>>()
     }
 
-    pub async fn get_top_guilds(
-        db_pool: &PgPool,
-        limit: u8,
-    ) -> anyhow::Result<Vec<GuildScoreboard>> {
+    pub async fn get_top_guilds(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<Scoreboard>> {
         sqlx::query_as::<_, DbGuildScoreboard>(
             r#"
             SELECT * FROM guild_scores
@@ -131,31 +132,31 @@ impl ScoresModelController {
         .fetch_all(db_pool)
         .await?
         .into_iter()
-        .map(GuildScoreboard::try_from)
-        .collect::<Result<Vec<GuildScoreboard>, _>>()
+        .map(Scoreboard::try_from)
+        .collect::<Result<Vec<Scoreboard>, _>>()
     }
 
     pub async fn get_user_score(
         db_pool: &PgPool,
         user_id: UserId,
-    ) -> anyhow::Result<Option<UserScoreboard>> {
+    ) -> anyhow::Result<Option<Scoreboard>> {
         sqlx::query_as::<_, DbUserScoreboard>("SELECT * FROM user_scores WHERE discord_id = ?;")
             .bind(user_id.to_string())
             .fetch_optional(db_pool)
             .await?
-            .map(UserScoreboard::try_from)
+            .map(Scoreboard::try_from)
             .transpose()
     }
 
     pub async fn get_guild_score(
         db_pool: &PgPool,
         guild_id: GuildId,
-    ) -> anyhow::Result<Option<GuildScoreboard>> {
+    ) -> anyhow::Result<Option<Scoreboard>> {
         sqlx::query_as::<_, DbGuildScoreboard>("SELECT * FROM guild_scores WHERE discord_id = ?;")
             .bind(guild_id.to_string())
             .fetch_optional(db_pool)
             .await?
-            .map(GuildScoreboard::try_from)
+            .map(Scoreboard::try_from)
             .transpose()
     }
 }

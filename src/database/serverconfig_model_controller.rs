@@ -17,7 +17,8 @@ use crate::{
     Context as AppContext,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
+#[repr(i8)]
 pub enum ActionLevel {
     Notify,
     Timeout,
@@ -38,24 +39,20 @@ impl Display for ActionLevel {
     }
 }
 
-fn stringify_action_level(level: ActionLevel) -> String {
-    match level {
-        ActionLevel::Notify => "Notify".to_string(),
-        ActionLevel::Timeout => "Timeout".to_string(),
-        ActionLevel::Kick => "Kick".to_string(),
-        ActionLevel::SoftBan => "Soft Ban".to_string(),
-        ActionLevel::Ban => "Ban".to_string(),
-    }
-}
+impl TryFrom<i8> for ActionLevel {
+    type Error = anyhow::Error;
 
-fn decode_action_level(level: i8) -> ActionLevel {
-    match level {
-        0 => ActionLevel::Notify,
-        1 => ActionLevel::Timeout,
-        2 => ActionLevel::Kick,
-        3 => ActionLevel::SoftBan,
-        4 => ActionLevel::Ban,
-        _ => ActionLevel::Notify,
+    fn try_from(value: i8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Notify),
+            1 => Ok(Self::Timeout),
+            2 => Ok(Self::Kick),
+            3 => Ok(Self::SoftBan),
+            4 => Ok(Self::Ban),
+            _ => {
+                anyhow::bail!("Unknown action level: {value}")
+            }
+        }
     }
 }
 
@@ -89,6 +86,50 @@ pub struct ServerConfig {
     pub updated_at: DateTime<Utc>,
 }
 
+impl TryFrom<DbServerConfig> for ServerConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DbServerConfig) -> Result<Self, Self::Error> {
+        let server_id = GuildId::from(value.server_id.parse::<u64>()?);
+
+        let log_channel = if let Some(channel_id) = value.log_channel {
+            Some(ChannelId::from(channel_id.parse::<u64>()?))
+        } else {
+            None
+        };
+
+        let ping_role = if let Some(role_id) = value.ping_role {
+            Some(RoleId::from(role_id.parse::<u64>()?))
+        } else {
+            None
+        };
+
+        let mut ignored_roles: Vec<RoleId> = Vec::new();
+
+        for role_id in value.ignored_roles.iter() {
+            ignored_roles.push(RoleId::from(role_id.parse::<u64>()?));
+        }
+
+        let spam_action_level = ActionLevel::try_from(value.spam_action_level)?;
+        let impersonation_action_level = ActionLevel::try_from(value.impersonation_action_level)?;
+        let bigotry_action_level = ActionLevel::try_from(value.bigotry_action_level)?;
+
+        Ok(ServerConfig {
+            server_id,
+            log_channel,
+            ping_users: value.ping_users,
+            ping_role,
+            spam_action_level,
+            impersonation_action_level,
+            bigotry_action_level,
+            timeout_users_with_role: value.timeout_users_with_role,
+            ignored_roles,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct ServerConfigComplete {
     pub guild: PartialGuild,
@@ -97,7 +138,7 @@ pub struct ServerConfigComplete {
 }
 
 impl ServerConfigComplete {
-    pub async fn from_server_config(
+    pub async fn try_from_server_config(
         server_config: ServerConfig,
         db_pool: &PgPool,
         ctx: &AppContext<'_>,
@@ -193,50 +234,6 @@ pub struct UpdateServerConfig {
 #[derive(Debug, FromRow)]
 struct ServerIdQuery {
     server_id: String,
-}
-
-impl TryFrom<DbServerConfig> for ServerConfig {
-    type Error = anyhow::Error;
-
-    fn try_from(value: DbServerConfig) -> Result<Self, Self::Error> {
-        let server_id = GuildId::from(value.server_id.parse::<u64>()?);
-
-        let log_channel = if let Some(channel_id) = value.log_channel {
-            Some(ChannelId::from(channel_id.parse::<u64>()?))
-        } else {
-            None
-        };
-
-        let ping_role = if let Some(role_id) = value.ping_role {
-            Some(RoleId::from(role_id.parse::<u64>()?))
-        } else {
-            None
-        };
-
-        let mut ignored_roles: Vec<RoleId> = Vec::new();
-
-        for role_id in value.ignored_roles.iter() {
-            ignored_roles.push(RoleId::from(role_id.parse::<u64>()?));
-        }
-
-        let spam_action_level = decode_action_level(value.spam_action_level);
-        let impersonation_action_level = decode_action_level(value.impersonation_action_level);
-        let bigotry_action_level = decode_action_level(value.bigotry_action_level);
-
-        Ok(ServerConfig {
-            server_id,
-            log_channel,
-            ping_users: value.ping_users,
-            ping_role,
-            spam_action_level,
-            impersonation_action_level,
-            bigotry_action_level,
-            timeout_users_with_role: value.timeout_users_with_role,
-            ignored_roles,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
-        })
-    }
 }
 
 pub struct ServerConfigModelController;

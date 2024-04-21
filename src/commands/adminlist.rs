@@ -2,6 +2,7 @@ use poise::serenity_prelude as serenity;
 use serenity::{User, UserId};
 
 use crate::{
+    assert_user,
     database::admin_model_controller::AdminModelController,
     util::{error::respond_error, format::fdisplay},
     Context,
@@ -10,6 +11,7 @@ use crate::{
 /// Get the list of admins of this bot.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn adminlist(ctx: Context<'_>) -> anyhow::Result<()> {
+    assert_user!(ctx);
     ctx.defer().await?;
 
     let admins = match AdminModelController::get_all(&ctx.data().db_pool).await {

@@ -34,8 +34,8 @@ async fn display_configs(
     #[description = "The ID(s) of the server(s) to display the config for. Separate multiple IDs with a comma (,). Max 5."]
     guild_id: String,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(&ctx);
-    assert_admin!(&ctx);
+    assert_admin_server!(ctx);
+    assert_admin!(ctx);
     ctx.defer().await?;
 
     let guild_ids = match parse_guild_ids(&guild_id) {
@@ -70,7 +70,7 @@ async fn display_configs(
 
     for config in configs {
         let full_config =
-            ServerConfigComplete::from_server_config(config, &ctx.data().db_pool, &ctx).await?;
+            ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx).await?;
 
         embeds.push(full_config.to_embed(ctx.author()))
     }
@@ -90,8 +90,8 @@ async fn delete_bad_actor(
     ctx: Context<'_>,
     #[description = "The entry id that you want to delete."] entry: u64,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(&ctx);
-    assert_admin!(&ctx);
+    assert_admin_server!(ctx);
+    assert_admin!(ctx);
     ctx.defer().await?;
 
     let deleted = match BadActorModelController::delete(&ctx.data().db_pool, entry).await {
