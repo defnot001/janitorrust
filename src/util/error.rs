@@ -1,7 +1,9 @@
 use std::fmt::Debug;
+use std::fmt::Display;
 
 use poise::FrameworkError;
 
+use crate::util::logger::sanitize_msg;
 use crate::Context as AppContext;
 use crate::Data;
 
@@ -94,49 +96,4 @@ pub async fn error_handler<'a>(
             Ok(())
         }
     }
-}
-
-pub async fn respond_error(
-    message: impl AsRef<str>,
-    error: impl Debug,
-    context: &AppContext<'_>,
-) -> anyhow::Result<()> {
-    let mut message = message.as_ref();
-
-    if message.ends_with('.') {
-        message = message.trim_end_matches('.');
-    }
-
-    if message.ends_with('!') {
-        message = message.trim_end_matches('!');
-    }
-
-    tracing::error!("{}: {:#?}", message, error);
-    context.say(format!("{}!", message)).await?;
-
-    Ok(())
-}
-
-pub async fn respond_mistake(
-    message: impl AsRef<str>,
-    context: &AppContext<'_>,
-) -> anyhow::Result<()> {
-    let mut message = message.as_ref();
-
-    if message.ends_with('.') {
-        message = message.trim_end_matches('.');
-    }
-
-    if message.ends_with('!') {
-        message = message.trim_end_matches('!');
-    }
-
-    tracing::warn!(
-        "{} invoked /{} but they made a mistake.",
-        context.author(),
-        context.command().name
-    );
-    context.say(format!("{}.", message)).await?;
-
-    Ok(())
 }
