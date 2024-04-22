@@ -4,7 +4,7 @@ mod commands;
 mod database;
 mod util;
 
-use commands::{adminconfig, adminlist, config, scores};
+use commands::{adminconfig, adminlist, config, scores, user};
 use poise::serenity_prelude as serenity;
 use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
@@ -12,6 +12,7 @@ use sqlx::postgres::PgPoolOptions;
 use util::config::Config;
 use util::error;
 use util::format::display;
+use util::logger::Logger;
 
 pub struct Data {
     pub db_pool: sqlx::PgPool,
@@ -26,6 +27,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load()?;
     tracing::info!("Successfully loaded config!");
+
+    Logger::set(config.admin_server_error_log_channel);
+    tracing::info!("Successfully initialized the logger!");
 
     let db_pool = PgPoolOptions::new()
         .max_connections(5)
@@ -43,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
                 adminlist::adminlist(),
                 config::config(),
                 scores::scores(),
+                user::user(),
             ],
             event_handler: |ctx, event, framework, _data| {
                 Box::pin(event_handler(ctx, event, framework))
@@ -86,7 +91,7 @@ async fn event_handler(
                 kind: serenity::ActivityType::Watching,
                 state: None,
                 url: None,
-            }))
+            }));
         }
         serenity::FullEvent::InteractionCreate { interaction, .. } => {
             if interaction.kind() != InteractionType::Command {
