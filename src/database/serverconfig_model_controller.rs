@@ -273,7 +273,7 @@ impl ServerConfigModelController {
     /// Gets multiple guild's [ServerConfig]s by their [GuildId]s from the database.
     pub async fn get_multiple_by_guild_id(
         pg_pool: &PgPool,
-        guild_ids: Vec<GuildId>,
+        guild_ids: &[GuildId],
     ) -> anyhow::Result<Vec<ServerConfig>> {
         let guild_ids: Vec<String> = guild_ids.iter().map(|id| id.to_string()).collect();
 
