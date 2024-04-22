@@ -4,7 +4,8 @@ use serenity::{User, UserId};
 use crate::{
     assert_user,
     database::admin_model_controller::AdminModelController,
-    util::{error::respond_error, format::fdisplay},
+    oops,
+    util::{format::fdisplay, logger::Logger},
     Context,
 };
 
@@ -12,13 +13,15 @@ use crate::{
 #[poise::command(slash_command, guild_only = true)]
 pub async fn adminlist(ctx: Context<'_>) -> anyhow::Result<()> {
     assert_user!(ctx);
+
     ctx.defer().await?;
 
     let admins = match AdminModelController::get_all(&ctx.data().db_pool).await {
         Ok(admins) => admins.into_iter().map(|a| a.id).collect::<Vec<UserId>>(),
         Err(e) => {
             let msg = "Failed get the admins from the from the database";
-            return respond_error(msg, e, &ctx).await;
+            Logger::get().error(&ctx, e, msg).await;
+            oops!(ctx, msg);
         }
     };
 

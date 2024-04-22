@@ -10,10 +10,11 @@ use crate::{
         scores_model_controller::{Scoreboard, ScoresModelController},
         serverconfig_model_controller::ServerConfigModelController,
     },
+    oops,
     util::{
         builders::create_default_embed,
-        error::{respond_error, respond_mistake},
         format::{display, fdisplay, user_mention},
+        logger::Logger,
         random_utils::parse_snowflake,
     },
     Context,
@@ -44,41 +45,58 @@ async fn server(
 ) -> anyhow::Result<()> {
     assert_user!(ctx);
 
-    let guild_id = match parse_snowflake(guild_id) {
+    let logger = Logger::get();
+
+    ctx.defer().await?;
+
+    let guild_id = match parse_snowflake(&guild_id) {
         Ok(id) => GuildId::from(id),
         Err(e) => {
-            let msg = "Failed to parse the provided guild id";
-            return respond_error(msg, e, &ctx).await;
+            let log_msg =
+                format!("Failed to parse provided guild id string `{guild_id}` into guild id");
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!("`{guild_id}` is not a valid server id!");
+            oops!(ctx, user_msg);
         }
     };
 
     let guild = match guild_id.to_partial_guild(&ctx).await {
         Ok(guild) => guild,
         Err(e) => {
-            let msg = "Failed to find the guild for the provided ID";
-            return respond_error(msg, e, &ctx).await;
+            let log_msg = format!("Failed to get guild for {guild_id} from the discord API");
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!("Cannot find the guild for {guild_id}!");
+            oops!(ctx, user_msg);
         }
     };
 
     let scores = match ScoresModelController::get_guild_score(&ctx.data().db_pool, guild_id).await {
         Ok(scores) => scores,
         Err(e) => {
-            let msg = format!(
-                "Failed to query the scores for {} from the database",
+            let log_msg = format!(
+                "Failed to query the scores for {} from the database.",
                 display(&guild)
             );
-            return respond_error(msg, e, &ctx).await;
+            logger.error(&ctx, e, log_msg);
+
+            let user_msg = format!(
+                "Failed to query the scores for {} from the database!",
+                fdisplay(&guild)
+            );
+            oops!(ctx, user_msg);
         }
     };
 
     let scores = match scores {
         Some(scores) => scores,
         None => {
-            let msg = format!(
-                "{} does not have any scores in the database",
-                display(&guild)
+            let user_msg = format!(
+                "{} does not have any scores in the database!",
+                fdisplay(&guild)
             );
-            return respond_mistake(msg, &ctx).await;
+            oops!(ctx, user_msg);
         }
     };
 
@@ -110,15 +128,25 @@ async fn user(
 ) -> anyhow::Result<()> {
     assert_user!(ctx);
 
+    let logger = Logger::get();
+
+    ctx.defer().await?;
+
     let user_scores =
         match ScoresModelController::get_user_score(&ctx.data().db_pool, user.id).await {
             Ok(scores) => scores,
             Err(e) => {
-                let msg = format!(
+                let log_msg = format!(
                     "Failed query the scores for {} from the database",
                     display(&user)
                 );
-                return respond_error(msg, e, &ctx).await;
+                logger.error(&ctx, e, log_msg).await;
+
+                let user_msg = format!(
+                    "Failed get the scores for {} from the database!",
+                    fdisplay(&user)
+                );
+                oops!(ctx, user_msg);
             }
         };
 
@@ -127,9 +155,9 @@ async fn user(
         None => {
             let msg = format!(
                 "Cannot find the scores for {} in the database",
-                display(&user)
+                fdisplay(&user)
             );
-            return respond_mistake(msg, &ctx).await;
+            oops!(ctx, msg);
         }
     };
 
@@ -163,6 +191,10 @@ async fn leaderboard(
 ) -> anyhow::Result<()> {
     assert_user!(ctx);
 
+    let logger = Logger::get();
+
+    ctx.defer().await?;
+
     let scores = match scoreboard_type {
         ScoreboardType::Users => {
             ScoresModelController::get_top_users(&ctx.data().db_pool, 10).await
@@ -175,8 +207,9 @@ async fn leaderboard(
     let scores = match scores {
         Ok(scores) => scores,
         Err(e) => {
-            let msg = "Failed to query the scoreboard from the database";
-            return respond_error(msg, e, &ctx).await;
+            let msg = "Failed to query the scoreboard from the database!";
+            logger.error(&ctx, e, msg).await;
+            oops!(ctx, msg);
         }
     };
 
@@ -191,8 +224,9 @@ async fn leaderboard(
             Ok(())
         }
         Err(e) => {
-            let msg = "Failed to query the discord API to build the leaderboard embed";
-            respond_error(msg, e, &ctx).await
+            let msg = "Failed to query the discord API to build the leaderboard embed!";
+            logger.error(&ctx, e, msg).await;
+            oops!(ctx, msg);
         }
     }
 }

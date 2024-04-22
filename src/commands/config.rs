@@ -9,7 +9,8 @@ use crate::{
     database::serverconfig_model_controller::{
         ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
     },
-    util::error::{respond_error, respond_mistake},
+    oops,
+    util::logger::Logger,
     Context,
 };
 
@@ -30,6 +31,8 @@ async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
     assert_user_server!(ctx);
     let guild_id = ctx.guild_id().unwrap();
 
+    let logger = Logger::get();
+
     ctx.defer().await?;
 
     let config =
@@ -37,13 +40,16 @@ async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
             Ok(config) => match config {
                 Some(config) => config,
                 None => {
-                    let msg = "Cannot find the config for your server in the database";
-                    return respond_mistake(msg, &ctx).await;
+                    let user_msg = "Cannot find the config for your server in the database!";
+                    oops!(ctx, user_msg);
                 }
             },
             Err(e) => {
-                let msg = "Database query for server config failed";
-                return respond_error(msg, e, &ctx).await;
+                let log_msg = format!("Failed to query db for server config for {guild_id}");
+                logger.error(&ctx, e, log_msg);
+
+                let user_msg = "Failed to get server config from database!";
+                oops!(ctx, user_msg);
             }
         };
 
@@ -52,8 +58,12 @@ async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
         {
             Ok(config) => config.to_embed(ctx.author()),
             Err(e) => {
-                let msg = format!("Failed to fetch fetch users or guild for server {guild_id}");
-                return respond_error(msg, e, &ctx).await;
+                let log_msg =
+                    format!("Failed to upgrade server config for {guild_id} to full config");
+                logger.error(&ctx, e, log_msg).await;
+
+                let user_msg = "Failed to get server config from database!";
+                oops!(ctx, user_msg);
             }
         };
 
@@ -85,12 +95,14 @@ async fn update(
     assert_user_server!(ctx);
     let guild_id = ctx.guild_id().unwrap();
 
+    let logger = Logger::get();
+
     ctx.defer().await?;
 
     if let Some(c) = &log_channel {
         if c.kind != ChannelType::Text {
             let msg = format!("{} is not a text channel.", c.name);
-            respond_mistake(msg, &ctx).await;
+            oops!(ctx, msg);
         }
     }
 
@@ -115,8 +127,11 @@ async fn update(
         match ServerConfigModelController::update(&ctx.data().db_pool, guild_id, update).await {
             Ok(updated) => updated,
             Err(e) => {
-                let msg = "Failed to update server config for your server";
-                return respond_error(msg, e, &ctx).await;
+                let log_msg = format!("Failed to update server config for {guild_id}");
+                logger.error(&ctx, e, log_msg).await;
+
+                let user_msg = "Failed to update server config for your server!";
+                oops!(ctx, user_msg);
             }
         };
 
@@ -129,8 +144,11 @@ async fn update(
     {
         Ok(config) => config.to_embed(ctx.author()),
         Err(e) => {
-            let msg = format!("Failed to fetch fetch users or guild for server {guild_id}");
-            return respond_error(msg, e, &ctx).await;
+            let log_msg = format!("Failed to upgrade server config for {guild_id} to full config");
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = "Failed to update server config for your server in the datbase!";
+            oops!(ctx, user_msg);
         }
     };
 
