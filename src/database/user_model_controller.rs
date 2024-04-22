@@ -21,6 +21,7 @@ pub struct User {
     pub id: UserId,
     pub user_type: UserType,
     pub servers: Vec<GuildId>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl TryFrom<DbUser> for User {
@@ -40,6 +41,7 @@ impl TryFrom<DbUser> for User {
             id,
             user_type,
             servers,
+            created_at: db_user.created_at
         })
     }
 }
