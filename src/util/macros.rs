@@ -79,3 +79,11 @@ macro_rules! assert_user_server {
         }
     };
 }
+
+#[macro_export]
+macro_rules! oops {
+    ($ctx:ident, $msg: expr) => {
+        &$ctx.say($msg).await?;
+        return Ok(());
+    };
+}
