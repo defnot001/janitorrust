@@ -1,6 +1,6 @@
 use std::{num::NonZeroU64, str::FromStr};
 
-use serenity::all::{CacheHttp, CreateEmbed, PartialGuild, User, UserId};
+use serenity::all::{CacheHttp, CreateEmbed, GuildId, PartialGuild, User, UserId};
 
 pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
     NonZeroU64::from_str(snowflake.into().as_str()).map_err(anyhow::Error::new)
@@ -13,12 +13,27 @@ pub async fn get_users(
     let mut users = Vec::new();
 
     for user_id in user_ids {
+        tracing::debug!("Fetching user {user_id}");
         let user = user_id.to_user(cache_http).await?;
-
         users.push(user);
     }
 
     Ok(users)
+}
+
+pub async fn get_guilds(
+    guild_ids: Vec<GuildId>,
+    cache_http: &impl CacheHttp,
+) -> anyhow::Result<Vec<PartialGuild>> {
+    let mut guilds = Vec::new();
+
+    for guild_id in guild_ids {
+        tracing::debug!("Fetching guild {guild_id}");
+        let guild = guild_id.to_partial_guild(cache_http).await?;
+        guilds.push(guild);
+    }
+
+    Ok(guilds)
 }
 
 #[cfg(test)]
