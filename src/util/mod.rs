@@ -2,6 +2,7 @@ pub mod builders;
 pub mod config;
 pub mod error;
 pub mod format;
+pub mod logger;
 #[macro_export]
 pub mod macros;
 pub mod random_utils;
