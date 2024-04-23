@@ -1,8 +1,13 @@
 use chrono::{DateTime, Utc};
-use serenity::all::{GuildId, UserId};
+use serenity::all::{CreateEmbed, GuildId, PartialGuild, User as SerenityUser, UserId};
 use sqlx::{prelude::FromRow, PgPool};
 
-#[derive(Debug)]
+use crate::util::{
+    builders::create_default_embed,
+    format::{display_time, fdisplay},
+};
+
+#[derive(Debug, poise::ChoiceParameter)]
 pub enum UserType {
     Reporter,
     Listener,
@@ -24,6 +29,22 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
+impl User {
+    pub fn to_embed(
+        &self,
+        interaction_user: &SerenityUser,
+        target_user: &SerenityUser,
+        guilds: &[PartialGuild],
+    ) -> CreateEmbed {
+        let guilds = guilds.iter().map(fdisplay).collect::<Vec<_>>();
+
+        create_default_embed(interaction_user)
+            .title(format!("User Info {}", fdisplay(target_user)))
+            .field("Servers", guilds.join("\n"), false)
+            .field("Created At", display_time(self.created_at), false)
+    }
+}
+
 impl TryFrom<DbUser> for User {
     type Error = anyhow::Error;
 
@@ -41,7 +62,7 @@ impl TryFrom<DbUser> for User {
             id,
             user_type,
             servers,
-            created_at: db_user.created_at
+            created_at: db_user.created_at,
         })
     }
 }
@@ -65,22 +86,38 @@ impl UserModelController {
         db_pool: &PgPool,
         user_id: UserId,
         user_type: UserType,
-        servers: Vec<GuildId>,
+        servers: &[GuildId],
     ) -> anyhow::Result<User> {
         let servers = servers
             .iter()
             .map(|server_id| server_id.to_string())
             .collect::<Vec<String>>();
 
-        sqlx::query_as::<_, DbUser>(
+        let db_user = sqlx::query_as::<_, DbUser>(
             "INSERT INTO users (id, user_type, servers) VALUES ($1, $2, $3) RETURNING *;",
         )
         .bind(user_id.to_string())
         .bind(serialize_user_type(&user_type))
         .bind(servers)
         .fetch_one(db_pool)
-        .await?
-        .try_into()
+        .await;
+
+        let db_user = match db_user {
+            Ok(user) => user,
+            Err(e) => {
+                let Some(db_error) = e.as_database_error() else {
+                    return Err(anyhow::Error::from(e));
+                };
+
+                if db_error.is_unique_violation() {
+                    anyhow::bail!("Unique key violation")
+                }
+
+                return Err(anyhow::Error::from(e));
+            }
+        };
+
+        User::try_from(db_user)
     }
 
     pub async fn update(
