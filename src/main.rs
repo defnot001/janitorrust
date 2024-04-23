@@ -4,7 +4,7 @@ mod commands;
 mod database;
 mod util;
 
-use commands::{adminconfig, adminlist, config, scores, user};
+use commands::{adminconfig, adminlist, badactor, config, scores, user};
 use poise::serenity_prelude as serenity;
 use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
@@ -48,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
                 config::config(),
                 scores::scores(),
                 user::user(),
+                badactor::badactor(),
             ],
             event_handler: |ctx, event, framework, _data| {
                 Box::pin(event_handler(ctx, event, framework))
