@@ -1,18 +1,23 @@
+use anyhow::Context;
 use poise::CreateReply;
 use serde::{Deserialize, Serialize};
 use serenity::all::{GuildId, User as SerenityUser, UserId};
+use sqlx::PgPool;
 
 use crate::{
     assert_admin, assert_admin_server,
-    database::user_model_controller::UserModelController,
+    database::{
+        serverconfig_model_controller::ServerConfigModelController,
+        user_model_controller::{UserModelController, UserType},
+    },
     oops,
     util::{
         builders::create_default_embed,
         format::{display, display_time, fdisplay},
         logger::Logger,
-        random_utils::{get_guilds, get_users},
+        random_utils::{get_guilds, get_users, parse_guild_ids},
     },
-    Context,
+    Context as AppContext,
 };
 
 /// Subcommands for users.
@@ -22,17 +27,18 @@ use crate::{
     subcommands("list", "info", "add", "update", "remove"),
     subcommand_required
 )]
-pub async fn user(_: Context<'_>) -> anyhow::Result<()> {
+pub async fn user(_: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// List users from a specific server.
 #[poise::command(slash_command, guild_only = true)]
 async fn list(
-    ctx: Context<'_>,
+    ctx: AppContext<'_>,
     #[description = "The server ID you want to list the users for."] server_id: GuildId,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
     assert_admin!(ctx);
+    assert_admin_server!(ctx);
     let logger = Logger::get();
     ctx.defer().await?;
 
@@ -81,7 +87,7 @@ async fn list(
 
     let display_users = users
         .iter()
-        .map(|u| fdisplay(u))
+        .map(fdisplay)
         .collect::<Vec<String>>()
         .join("\n");
 
@@ -94,13 +100,14 @@ async fn list(
     Ok(())
 }
 
+/// Get information about a user.
 #[poise::command(slash_command, guild_only = true)]
 async fn info(
-    ctx: Context<'_>,
+    ctx: AppContext<'_>,
     #[description = "The user you want info about."] user: SerenityUser,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
     assert_admin!(ctx);
+    assert_admin_server!(ctx);
     let logger = Logger::get();
     ctx.defer().await?;
 
@@ -123,7 +130,7 @@ async fn info(
         }
     };
 
-    let guilds = match get_guilds(db_user.servers, &ctx).await {
+    let guilds = match get_guilds(&db_user.servers, &ctx).await {
         Ok(guilds) => guilds,
         Err(e) => {
             let log_msg = format!(
@@ -142,7 +149,7 @@ async fn info(
 
     let display_guilds = guilds
         .iter()
-        .map(|g| fdisplay(g))
+        .map(fdisplay)
         .collect::<Vec<String>>()
         .join("\n");
 
@@ -156,29 +163,121 @@ async fn info(
     Ok(())
 }
 
+/// Add a user to the databse.
 #[poise::command(slash_command, guild_only = true)]
-async fn add(ctx: Context<'_>) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
+async fn add(
+    ctx: AppContext<'_>,
+    #[description = "The user to add to the whitelist."] user: SerenityUser,
+    #[description = "Server(s) for bot usage, separated by commas."] servers: String,
+    #[description = "Wether the user can only receive reports or also create them."]
+    user_type: UserType,
+) -> anyhow::Result<()> {
     assert_admin!(ctx);
+    assert_admin_server!(ctx);
+    let logger = Logger::get();
+    ctx.defer().await?;
+
+    let guild_ids = match parse_guild_ids(&servers) {
+        Ok(ids) => ids,
+        Err(e) => {
+            let user_msg = "Failed to parse your provided guild IDs!";
+            oops!(ctx, user_msg);
+        }
+    };
+
+    let guilds = match get_guilds(&guild_ids, &ctx).await {
+        Ok(guilds) => guilds,
+        Err(e) => {
+            let log_msg = format!(
+                "Failed to get one or more guilds for {} from the discord api",
+                user
+            );
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!("Could not get one or more guild(s) for {}!", user);
+            oops!(ctx, user_msg);
+        }
+    };
+
+    let added_user = match UserModelController::create(
+        &ctx.data().db_pool,
+        user.id,
+        user_type,
+        &guild_ids,
+    )
+    .await
+    {
+        Ok(user) => user,
+        Err(e) => {
+            if e.to_string().starts_with("Unique") {
+                let msg = format!("User {} is already in the database!", fdisplay(&user));
+                oops!(ctx, msg);
+            } else {
+                let log_msg = format!("Failed to add user {} to the database", display(&user));
+                logger.error(&ctx, e, log_msg).await;
+
+                let user_msg = format!("Failed to add user {} to the database!", fdisplay(&user));
+                oops!(ctx, user_msg);
+            }
+        }
+    };
+
+    if let Err(e) = handle_server_config_updates(&ctx.data().db_pool, &[], &guild_ids).await {
+        let log_msg = "Failed handle potential server config updates";
+        logger.error(&ctx, e, log_msg).await;
+    }
+
+    ctx.send(
+        CreateReply::default()
+            .embed(added_user.to_embed(ctx.author(), &user, &guilds))
+            .content("User added to the database!"),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Update a user in the database
+#[poise::command(slash_command, guild_only = true)]
+async fn update(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    assert_admin!(ctx);
+    assert_admin_server!(ctx);
+
+    let logger = Logger::get();
+    ctx.defer().await?;
+
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only = true)]
+async fn remove(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    assert_admin!(ctx);
+    assert_admin_server!(ctx);
     let logger = Logger::get();
     ctx.defer().await?;
     Ok(())
 }
 
-#[poise::command(slash_command, guild_only = true)]
-async fn update(ctx: Context<'_>) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
-    assert_admin!(ctx);
-    let logger = Logger::get();
-    ctx.defer().await?;
-    Ok(())
-}
+async fn handle_server_config_updates(
+    db_pool: &PgPool,
+    old_ids: &[GuildId],
+    new_ids: &[GuildId],
+) -> anyhow::Result<()> {
+    let add_res = futures::future::try_join_all(
+        new_ids
+            .iter()
+            .filter(|&id| !old_ids.contains(id))
+            .map(|&g| ServerConfigModelController::create_default_if_not_exists(db_pool, g)),
+    );
 
-#[poise::command(slash_command, guild_only = true)]
-async fn remove(ctx: Context<'_>) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
-    assert_admin!(ctx);
-    let logger = Logger::get();
-    ctx.defer().await?;
+    let remove_res = futures::future::try_join_all(
+        old_ids
+            .iter()
+            .filter(|&id| !new_ids.contains(id))
+            .map(|&g| ServerConfigModelController::delete_if_needed(db_pool, g)),
+    );
+
+    tokio::try_join!(add_res, remove_res).context("Failed to handle server config updates")?;
+
     Ok(())
 }
