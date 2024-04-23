@@ -10,7 +10,7 @@ use crate::{
         serverconfig_model_controller::{ServerConfigComplete, ServerConfigModelController},
     },
     oops,
-    util::{logger::Logger, screenshot::FileManager},
+    util::{logger::Logger, random_utils::parse_guild_ids, screenshot::FileManager},
     Context,
 };
 
@@ -32,8 +32,8 @@ async fn display_configs(
     #[description = "The ID(s) of the server(s) to display the config for. Separate multiple IDs with a comma (,). Max 5."]
     guild_id: String,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
     assert_admin!(ctx);
+    assert_admin_server!(ctx);
 
     let logger = Logger::get();
 
@@ -112,8 +112,8 @@ async fn delete_bad_actor(
     ctx: Context<'_>,
     #[description = "The entry id that you want to delete."] entry: u64,
 ) -> anyhow::Result<()> {
-    assert_admin_server!(ctx);
     assert_admin!(ctx);
+    assert_admin_server!(ctx);
 
     let logger = Logger::get();
 
@@ -144,19 +144,4 @@ async fn delete_bad_actor(
 
     ctx.say(format!("Successfully deleted bad actor entry with id {entry} from the database. If they had a screenshot, it was also deleted.")).await?;
     Ok(())
-}
-
-fn parse_guild_ids(str: &str) -> anyhow::Result<Vec<GuildId>> {
-    str.split(',')
-        .map(|id| match id.parse::<u64>() {
-            Ok(id) => {
-                if let Some(non_zero) = NonZeroU64::new(id) {
-                    Ok(GuildId::from(non_zero))
-                } else {
-                    anyhow::bail!("0 is not a valid guild id")
-                }
-            }
-            Err(e) => anyhow::bail!(e),
-        })
-        .collect()
 }
