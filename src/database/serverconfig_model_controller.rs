@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{
@@ -242,19 +243,19 @@ impl ServerConfigModelController {
     pub async fn create_default_if_not_exists(
         pg_pool: &PgPool,
         guild_id: GuildId,
-    ) -> anyhow::Result<ServerConfig> {
-        sqlx::query_as::<_, DbServerConfig>(
+    ) -> anyhow::Result<()> {
+        sqlx::query(
             r#"
             INSERT INTO server_configs (server_id)
             VALUES ($1)
-            ON CONFLICT (server_id) DO NOTHING
-            RETURNING *;
+            ON CONFLICT (server_id) DO NOTHING;
             "#,
         )
         .bind(guild_id.to_string())
-        .fetch_one(pg_pool)
-        .await
-        .map(ServerConfig::try_from)?
+        .execute(pg_pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Gets a guilds's [ServerConfig] by its [GuildId] from the database.
@@ -417,7 +418,17 @@ impl ServerConfigModelController {
         ServerConfig::try_from(server_config)
     }
 
-    pub async fn delete_if_needed() {
-        todo!()
+    pub async fn delete_if_needed(pg_pool: &PgPool, guild_id: GuildId) -> anyhow::Result<()> {
+        let users =
+            sqlx::query_as::<_, ServerIdQuery>("SELECT id FROM users WHERE $1 = ANY(servers);")
+                .bind(guild_id.to_string())
+                .fetch_all(pg_pool)
+                .await?;
+
+        if users.is_empty() {
+            Self::delete(pg_pool, guild_id).await?;
+        }
+
+        Ok(())
     }
 }
