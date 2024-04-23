@@ -19,7 +19,7 @@ struct DbBadActor {
     last_changed_by: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, poise::ChoiceParameter)]
 pub enum BadActorType {
     Spam,
     Impersonation,
