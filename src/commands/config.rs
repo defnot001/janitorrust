@@ -10,7 +10,7 @@ use crate::{
         ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
     },
     oops,
-    util::logger::Logger,
+    util::{logger::Logger, random_utils::parse_role_ids},
     Context,
 };
 
@@ -160,19 +160,4 @@ async fn update(
     .await?;
 
     Ok(())
-}
-
-fn parse_role_ids(str: &str) -> anyhow::Result<Vec<RoleId>> {
-    str.split(',')
-        .map(|id| match id.parse::<u64>() {
-            Ok(id) => {
-                if let Some(non_zero) = NonZeroU64::new(id) {
-                    Ok(RoleId::from(non_zero))
-                } else {
-                    anyhow::bail!("0 is not a valid role id")
-                }
-            }
-            Err(e) => anyhow::bail!(e),
-        })
-        .collect()
 }
