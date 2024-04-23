@@ -1,6 +1,6 @@
 use std::{num::NonZeroU64, str::FromStr};
 
-use serenity::all::{CacheHttp, CreateEmbed, GuildId, PartialGuild, User, UserId};
+use serenity::all::{CacheHttp, CreateEmbed, GuildId, PartialGuild, RoleId, User, UserId};
 
 pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
     NonZeroU64::from_str(snowflake.into().as_str()).map_err(anyhow::Error::new)
@@ -22,7 +22,7 @@ pub async fn get_users(
 }
 
 pub async fn get_guilds(
-    guild_ids: Vec<GuildId>,
+    guild_ids: &[GuildId],
     cache_http: &impl CacheHttp,
 ) -> anyhow::Result<Vec<PartialGuild>> {
     let mut guilds = Vec::new();
@@ -34,6 +34,36 @@ pub async fn get_guilds(
     }
 
     Ok(guilds)
+}
+
+pub fn parse_guild_ids(str: &str) -> anyhow::Result<Vec<GuildId>> {
+    str.split(',')
+        .map(|id| match id.parse::<u64>() {
+            Ok(id) => {
+                if let Some(non_zero) = NonZeroU64::new(id) {
+                    Ok(GuildId::from(non_zero))
+                } else {
+                    anyhow::bail!("0 is not a valid guild id")
+                }
+            }
+            Err(e) => anyhow::bail!(e),
+        })
+        .collect()
+}
+
+pub fn parse_role_ids(str: &str) -> anyhow::Result<Vec<RoleId>> {
+    str.split(',')
+        .map(|id| match id.parse::<u64>() {
+            Ok(id) => {
+                if let Some(non_zero) = NonZeroU64::new(id) {
+                    Ok(RoleId::from(non_zero))
+                } else {
+                    anyhow::bail!("0 is not a valid role id")
+                }
+            }
+            Err(e) => anyhow::bail!(e),
+        })
+        .collect()
 }
 
 #[cfg(test)]
