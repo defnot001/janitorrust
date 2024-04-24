@@ -237,24 +237,146 @@ async fn add(
     Ok(())
 }
 
-/// Update a user in the database
+/// Update a user in the database.
 #[poise::command(slash_command, guild_only = true)]
-async fn update(ctx: AppContext<'_>) -> anyhow::Result<()> {
+async fn update(
+    ctx: AppContext<'_>,
+    #[description = "The user to add update on the whitelist."] user: SerenityUser,
+    #[description = "Server(s) for bot usage, separated by commas."] servers: Option<String>,
+    #[description = "Wether the user can only receive reports or also create them."]
+    user_type: Option<UserType>,
+) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-
     let logger = Logger::get();
     ctx.defer().await?;
+
+    let new_guild_ids = if let Some(servers) = servers {
+        match parse_guild_ids(&servers) {
+            Ok(guild_ids) => Some(guild_ids),
+            Err(e) => {
+                let user_msg = "Failed to parse your provided guild IDs!";
+                oops!(ctx, user_msg);
+            }
+        }
+    } else {
+        None
+    };
+
+    let old_user = match UserModelController::get(&ctx.data().db_pool, user.id).await {
+        Ok(user) => user,
+        Err(e) => {
+            let log_msg = format!(
+                "Failed to get user {} to update in the database",
+                display(&user)
+            );
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!(
+                "Failed to get user {} to update from the database!",
+                fdisplay(&user)
+            );
+            oops!(ctx, user_msg);
+        }
+    };
+
+    let old_user = match old_user {
+        Some(user) => user,
+        None => {
+            let user_msg = format!(
+                "User {} does not exist in the database! Consider adding them by using `/user add`.",
+                fdisplay(&user)
+            );
+            oops!(ctx, user_msg);
+        }
+    };
+
+    let user_type = user_type.unwrap_or(old_user.user_type);
+    let updated_ids = new_guild_ids.unwrap_or(old_user.servers.clone());
+
+    let updated_guilds = match get_guilds(&updated_ids, &ctx).await {
+        Ok(guilds) => guilds,
+        Err(e) => {
+            let log_msg = format!(
+                "Failed to get one or more guilds for {} from the discord api",
+                user
+            );
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!("Could not get one or more guild(s) for {}!", user);
+            oops!(ctx, user_msg);
+        }
+    };
+
+    let updated_user =
+        match UserModelController::update(&ctx.data().db_pool, user.id, user_type, &updated_ids)
+            .await
+        {
+            Ok(updated) => updated,
+            Err(e) => {
+                let log_msg = format!("Failed to updated user {} in the database", display(&user));
+                logger.error(&ctx, e, log_msg).await;
+
+                let user_msg =
+                    format!("Failed to updated user {} in the database", fdisplay(&user));
+                oops!(ctx, user_msg);
+            }
+        };
+
+    if let Err(e) =
+        handle_server_config_updates(&ctx.data().db_pool, &old_user.servers, &updated_ids).await
+    {
+        let log_msg = "Failed handle potential server config updates";
+        logger.error(&ctx, e, log_msg).await;
+    }
+
+    ctx.send(
+        CreateReply::default()
+            .embed(updated_user.to_embed(ctx.author(), &user, &updated_guilds))
+            .content("User updated in the database!"),
+    )
+    .await?;
 
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-async fn remove(ctx: AppContext<'_>) -> anyhow::Result<()> {
+async fn remove(
+    ctx: AppContext<'_>,
+    #[description = "The user to deleted from the whitelist."] user: SerenityUser,
+) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
     let logger = Logger::get();
     ctx.defer().await?;
+
+    let deleted_user = match UserModelController::delete(&ctx.data().db_pool, user.id).await {
+        Ok(user) => user,
+        Err(e) => {
+            let log_msg = format!("Failed to delete user {} from the database", display(&user));
+            logger.error(&ctx, e, log_msg).await;
+
+            let user_msg = format!(
+                "Failed to delete user {} from the database",
+                fdisplay(&user)
+            );
+            oops!(ctx, user_msg);
+        }
+    };
+
+    if let Err(e) =
+        handle_server_config_updates(&ctx.data().db_pool, &deleted_user.servers, &[]).await
+    {
+        let log_msg = "Failed handle potential server config updates";
+        logger.error(&ctx, e, log_msg).await;
+    }
+
+    ctx.say(format!(
+        "Successfully removed user {} from the database.",
+        fdisplay(&user)
+    ))
+    .await;
+
     Ok(())
 }
 
