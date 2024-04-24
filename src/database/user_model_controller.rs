@@ -124,7 +124,7 @@ impl UserModelController {
         db_pool: &PgPool,
         user_id: UserId,
         user_type: UserType,
-        servers: Vec<GuildId>,
+        servers: &[GuildId],
     ) -> anyhow::Result<User> {
         let servers = servers
             .iter()
