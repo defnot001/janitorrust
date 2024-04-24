@@ -1,5 +1,7 @@
 use std::{num::NonZeroU64, str::FromStr};
 
+use anyhow::Context;
+use futures::future::try_join_all;
 use serenity::all::{CacheHttp, CreateEmbed, GuildId, PartialGuild, RoleId, User, UserId};
 
 pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
@@ -10,30 +12,21 @@ pub async fn get_users(
     user_ids: Vec<UserId>,
     cache_http: &impl CacheHttp,
 ) -> anyhow::Result<Vec<User>> {
-    let mut users = Vec::new();
-
-    for user_id in user_ids {
-        tracing::debug!("Fetching user {user_id}");
-        let user = user_id.to_user(cache_http).await?;
-        users.push(user);
-    }
-
-    Ok(users)
+    try_join_all(user_ids.iter().map(|u| u.to_user(cache_http)))
+        .await
+        .context("Failed to fetch one or more users from the API")
 }
 
 pub async fn get_guilds(
     guild_ids: &[GuildId],
     cache_http: &impl CacheHttp,
 ) -> anyhow::Result<Vec<PartialGuild>> {
-    let mut guilds = Vec::new();
-
-    for guild_id in guild_ids {
-        tracing::debug!("Fetching guild {guild_id}");
-        let guild = guild_id.to_partial_guild(cache_http).await?;
-        guilds.push(guild);
-    }
-
-    Ok(guilds)
+    try_join_all(guild_ids.iter().map(|g| {
+        tracing::debug!("Fetching guild {g}");
+        g.to_partial_guild(cache_http)
+    }))
+    .await
+    .context("Failed to fetch one or more guilds from the API")
 }
 
 pub fn parse_guild_ids(str: &str) -> anyhow::Result<Vec<GuildId>> {
