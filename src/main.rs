@@ -1,4 +1,4 @@
-#![allow(dead_code, unused)]
+#![allow(dead_code, unused_variables)]
 
 mod commands;
 mod database;
@@ -10,14 +10,14 @@ use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
 
 use util::config::Config;
-use util::error;
-use util::format::display;
 use util::logger::Logger;
+use util::{error, format};
 
 pub struct Data {
     pub db_pool: sqlx::PgPool,
     pub config: Config,
 }
+
 pub type Context<'a> = poise::Context<'a, Data, anyhow::Error>;
 
 #[tokio::main]
@@ -105,9 +105,9 @@ async fn event_handler(
                         Ok(partial_guild) => {
                             let message = format!(
                                 "{} used /{} in {}",
-                                display(&command.user),
+                                format::display(&command.user),
                                 command.data.name,
-                                display(&partial_guild)
+                                format::display(&partial_guild)
                             );
 
                             tracing::info!(message);
@@ -119,7 +119,7 @@ async fn event_handler(
                     None => {
                         let message = format!(
                             "{} used /{} outside of a guild.",
-                            display(&command.user),
+                            format::display(&command.user),
                             command.data.name,
                         );
 
