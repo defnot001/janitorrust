@@ -1,9 +1,8 @@
 use std::num::NonZeroU64;
 
-use serenity::all::{CreateEmbed, GuildId, User, UserId};
+use poise::serenity_prelude as serenity;
+use serenity::{GuildId, UserId};
 use sqlx::{prelude::FromRow, PgPool};
-
-use crate::util::builders::create_default_embed;
 
 #[derive(Debug, FromRow)]
 struct DbUserScoreboard {

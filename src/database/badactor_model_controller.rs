@@ -1,9 +1,15 @@
+use std::fmt::Display;
+
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
-use serenity::{GuildId, User as SerenityUser, UserId};
+use serenity::{
+    CreateAttachment, CreateEmbed, CreateEmbedFooter, GuildId, Mentionable, PartialGuild,
+    User as SerenityUser, User, UserId,
+};
 use sqlx::{FromRow, PgPool};
 
-use crate::Context as AppContext;
+use crate::util::{format, random_utils, screenshot};
+use crate::{Context as AppContext, Logger};
 
 #[derive(Debug, FromRow)]
 struct DbBadActor {
@@ -19,11 +25,21 @@ struct DbBadActor {
     last_changed_by: String,
 }
 
-#[derive(Debug, poise::ChoiceParameter)]
+#[derive(Debug, Copy, Clone, poise::ChoiceParameter)]
 pub enum BadActorType {
     Spam,
     Impersonation,
     Bigotry,
+}
+
+impl Display for BadActorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Spam => write!(f, "Spam"),
+            Self::Impersonation => write!(f, "Impersonation"),
+            Self::Bigotry => write!(f, "Bigotry"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -41,8 +57,84 @@ pub struct BadActor {
 }
 
 impl BadActor {
-    pub async fn user(&self, ctx: &AppContext<'_>) -> Option<SerenityUser> {
+    pub async fn user(&self, ctx: AppContext<'_>) -> Option<SerenityUser> {
         self.user_id.to_user(ctx).await.ok()
+    }
+
+    pub async fn to_broadcast_embed(
+        &self,
+        ctx: AppContext<'_>,
+        origin_guild: &PartialGuild,
+        target_user: &User,
+    ) -> (CreateEmbed, Option<CreateAttachment>) {
+        let explanation = self
+            .explanation
+            .clone()
+            .unwrap_or("No explanation provided.".to_string());
+
+        let title = format!(
+            "{} (`{}`)",
+            target_user
+                .global_name
+                .clone()
+                .unwrap_or(target_user.name.clone()),
+            self.user_id
+        );
+        let thumbnail = target_user
+            .static_avatar_url()
+            .unwrap_or(target_user.default_avatar_url());
+        let author = format!("{} (`{}`)", ctx.author().mention(), ctx.author().id);
+
+        let embed = CreateEmbed::default()
+            .title(title)
+            .timestamp(Utc::now())
+            .thumbnail(thumbnail)
+            .field("Report ID", self.id.to_string(), true)
+            .field("Active", random_utils::display_bool(self.is_active), true)
+            .field("Type", self.actor_type.to_string(), true)
+            .field("Explanation", explanation, false)
+            .field("Server of Origin", format::fdisplay(origin_guild), false)
+            .field("Last Updated By", author, false);
+
+        // add footer
+        let embed = match ctx.framework().bot_id.to_user(&ctx).await {
+            Ok(bot_user) => embed.footer(
+                CreateEmbedFooter::new(
+                    bot_user
+                        .global_name
+                        .clone()
+                        .unwrap_or(bot_user.name.clone()),
+                )
+                .icon_url(
+                    bot_user
+                        .static_avatar_url()
+                        .unwrap_or(bot_user.default_avatar_url()),
+                ),
+            ),
+            Err(e) => {
+                let log_msg = "Failed to get bot user";
+                Logger::get().error(ctx, e, log_msg).await;
+                embed
+            }
+        };
+
+        let attachment = match self.screenshot_proof.clone() {
+            Some(path) => screenshot::FileManager::get(&path).await.ok(),
+            None => None,
+        };
+
+        match attachment {
+            Some(attachment) => {
+                let embed = embed.image(format!("attachment://{}", attachment.filename));
+
+                (embed, Some(attachment))
+            }
+            None => (embed, None),
+        }
+    }
+
+    pub fn ban_reason(&self) -> String {
+        format!("Bad Actor {} ({})", self.actor_type, self.id)
     }
 }
 
@@ -213,22 +305,17 @@ impl BadActorModelController {
     ) -> anyhow::Result<Vec<BadActor>> {
         let query_type = query_type.unwrap_or(BadActorQueryType::All);
 
-        let mut query_str = String::new();
-
-        match query_type {
-            BadActorQueryType::All => {
-                query_str =
-                    "SELECT * FROM bad_actors ORDER BY created_at DESC LIMIT $1;".to_string()
-            }
-            BadActorQueryType::Active => query_str =
+        let query_str = match query_type {
+            BadActorQueryType::All => "SELECT * FROM bad_actors ORDER BY created_at DESC LIMIT $1;",
+            BadActorQueryType::Active => {
                 "SELECT * FROM bad_actors WHERE is_active = true ORDER BY created_at DESC LIMIT $1"
-                    .to_string(),
-            BadActorQueryType::Inactive => query_str =
+            }
+            BadActorQueryType::Inactive => {
                 "SELECT * FROM bad_actors WHERE is_active = false ORDER BY created_at DESC LIMIT $1"
-                    .to_string(),
+            }
         };
 
-        sqlx::query_as::<_, DbBadActor>(&query_str)
+        sqlx::query_as::<_, DbBadActor>(query_str)
             .bind(limit as i8)
             .fetch_all(db_pool)
             .await?

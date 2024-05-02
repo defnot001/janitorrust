@@ -1,11 +1,9 @@
 use chrono::{DateTime, Utc};
-use serenity::all::{CreateEmbed, GuildId, PartialGuild, User as SerenityUser, UserId};
+use poise::serenity_prelude as serenity;
+use serenity::{CreateEmbed, GuildId, PartialGuild, User as SerenityUser, UserId};
 use sqlx::{prelude::FromRow, PgPool};
 
-use crate::util::{
-    builders::create_default_embed,
-    format::{display_time, fdisplay},
-};
+use crate::util::{embeds, format};
 
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum UserType {
@@ -36,12 +34,13 @@ impl User {
         target_user: &SerenityUser,
         guilds: &[PartialGuild],
     ) -> CreateEmbed {
-        let guilds = guilds.iter().map(fdisplay).collect::<Vec<_>>();
+        let guilds = guilds.iter().map(format::fdisplay).collect::<Vec<_>>();
 
-        create_default_embed(interaction_user)
-            .title(format!("User Info {}", fdisplay(target_user)))
+        embeds::CreateJanitorEmbed::new(interaction_user)
+            .into_embed()
+            .title(format!("User Info {}", format::fdisplay(target_user)))
             .field("Servers", guilds.join("\n"), false)
-            .field("Created At", display_time(self.created_at), false)
+            .field("Created At", format::display_time(self.created_at), false)
     }
 }
 

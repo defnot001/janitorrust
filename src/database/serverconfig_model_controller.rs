@@ -1,24 +1,19 @@
 use std::fmt::Display;
 
-use anyhow::Context;
 use chrono::{DateTime, Utc};
+use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
 use serenity::{
-    ChannelId, CreateEmbed, GuildId, PartialGuild, RoleId, User as SerenityUser, UserId,
+    ChannelId, CreateEmbed, GuildId, Mentionable, PartialGuild, RoleId, User as SerenityUser,
+    UserId,
 };
 use sqlx::{prelude::FromRow, PgPool};
 
-use super::user_model_controller::UserModelController;
+use crate::database::user_model_controller::UserModelController;
+use crate::util::{embeds, format};
+use crate::Context as AppContext;
 
-use crate::{
-    util::{
-        builders::create_default_embed,
-        format::{display_time, inline_code, Mentionable},
-    },
-    Context as AppContext,
-};
-
-#[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
+#[derive(Debug, Clone, Copy, PartialEq, poise::ChoiceParameter)]
 #[repr(i8)]
 pub enum ActionLevel {
     Notify,
@@ -66,7 +61,6 @@ struct DbServerConfig {
     spam_action_level: i8,
     impersonation_action_level: i8,
     bigotry_action_level: i8,
-    timeout_users_with_role: bool,
     ignored_roles: Vec<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -81,7 +75,6 @@ pub struct ServerConfig {
     pub spam_action_level: ActionLevel,
     pub impersonation_action_level: ActionLevel,
     pub bigotry_action_level: ActionLevel,
-    pub timeout_users_with_role: bool,
     pub ignored_roles: Vec<RoleId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -123,7 +116,6 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             spam_action_level,
             impersonation_action_level,
             bigotry_action_level,
-            timeout_users_with_role: value.timeout_users_with_role,
             ignored_roles,
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -141,26 +133,25 @@ pub struct ServerConfigComplete {
 impl ServerConfigComplete {
     pub async fn try_from_server_config(
         server_config: ServerConfig,
-        db_pool: &PgPool,
-        ctx: &AppContext<'_>,
+        ctx: AppContext<'_>,
     ) -> anyhow::Result<Self> {
-        let users = UserModelController::get_by_guild(db_pool, &server_config.server_id)
-            .await?
-            .into_iter()
-            .map(|u| u.id)
-            .collect::<Vec<UserId>>();
-
-        let guild = server_config.server_id.to_partial_guild(ctx).await?;
+        let (users, guild) = tokio::try_join!(
+            UserModelController::get_by_guild(&ctx.data().db_pool, &server_config.server_id),
+            server_config
+                .server_id
+                .to_partial_guild(ctx)
+                .map_err(|e| anyhow::anyhow!(e))
+        )?;
 
         Ok(Self {
             guild,
             server_config,
-            users,
+            users: users.into_iter().map(|u| u.id).collect::<Vec<_>>(),
         })
     }
 
     pub fn to_embed(&self, interaction_user: &SerenityUser) -> CreateEmbed {
-        let server_id = inline_code(self.guild.id.to_string());
+        let server_id = format::inline_code(self.guild.id.to_string());
 
         let guild_users = self
             .users
@@ -170,13 +161,13 @@ impl ServerConfigComplete {
             .join("\n");
 
         let log_channel = if let Some(channel_id) = self.server_config.log_channel {
-            channel_id.mention()
+            channel_id.mention().to_string()
         } else {
             String::from("Not set.")
         };
 
         let ping_role = if let Some(role_id) = self.server_config.ping_role {
-            role_id.mention()
+            role_id.mention().to_string()
         } else {
             String::from("Not set.")
         };
@@ -185,27 +176,22 @@ impl ServerConfigComplete {
         let impersonation = self.server_config.impersonation_action_level.to_string();
         let bigotry = self.server_config.bigotry_action_level.to_string();
 
-        let timeout = if self.server_config.timeout_users_with_role {
-            "Enabled"
-        } else {
-            "Disabled"
-        };
-
         let ignored_roles = if self.server_config.ignored_roles.is_empty() {
             String::from("None set.")
         } else {
             self.server_config
                 .ignored_roles
                 .iter()
-                .map(|r| r.mention())
+                .map(|r| r.mention().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         };
 
-        let created_at = display_time(self.server_config.created_at);
-        let updated_at = display_time(self.server_config.updated_at);
+        let created_at = format::display_time(self.server_config.created_at);
+        let updated_at = format::display_time(self.server_config.updated_at);
 
-        create_default_embed(interaction_user)
+        embeds::CreateJanitorEmbed::new(interaction_user)
+            .into_embed()
             .title(format!("Server Config for {}", &self.guild.name))
             .field("Server ID", server_id, false)
             .field("Whitelisted Admins", guild_users, false)
@@ -214,7 +200,6 @@ impl ServerConfigComplete {
             .field("Spam Action Level", spam, false)
             .field("Impersonation Action Level", impersonation, false)
             .field("Bigotry Action Level", bigotry, false)
-            .field("Timeout Users With Role", timeout, false)
             .field("Ignored Roles", ignored_roles, false)
             .field("Created At", created_at, false)
             .field("Updated At", updated_at, false)
@@ -364,10 +349,6 @@ impl ServerConfigModelController {
             .map(|level| level as i8)
             .unwrap_or(previous.bigotry_action_level);
 
-        let timeout_users_with_role = update
-            .timeout_users_with_role
-            .unwrap_or(previous.timeout_users_with_role);
-
         let ignored_roles = if let Some(ignored_roles) = update.ignored_roles {
             ignored_roles
                 .iter()
@@ -386,8 +367,7 @@ impl ServerConfigModelController {
                 spam_action_level = $5,
                 impersonation_action_level = $6,
                 bigotry_action_level = $7,
-                timeout_users_with_role = $8,
-                ignored_roles = $9,
+                ignored_roles = $8,
                 updated_at = now()
             WHERE server_id = $1
             RETURNING *;
@@ -400,7 +380,6 @@ impl ServerConfigModelController {
         .bind(spam_action_level)
         .bind(impersonation_action_level)
         .bind(bigotry_action_level)
-        .bind(timeout_users_with_role)
         .bind(&ignored_roles)
         .fetch_one(pg_pool)
         .await
