@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use serenity::all::{ChannelId, PartialGuild, RoleId, User, UserId};
+use poise::serenity_prelude as serenity;
+use serenity::{PartialGuild, User, UserId};
 
 pub trait HasNameAndID {
     fn name(&self) -> &str;
@@ -24,28 +25,6 @@ impl HasNameAndID for PartialGuild {
 
     fn name(&self) -> &str {
         &self.name
-    }
-}
-
-pub trait Mentionable {
-    fn mention(&self) -> String;
-}
-
-impl Mentionable for UserId {
-    fn mention(&self) -> String {
-        format!("<@{}>", self)
-    }
-}
-
-impl Mentionable for RoleId {
-    fn mention(&self) -> String {
-        format!("<@&{}", self)
-    }
-}
-
-impl Mentionable for ChannelId {
-    fn mention(&self) -> String {
-        format!("<#{}>", self)
     }
 }
 
