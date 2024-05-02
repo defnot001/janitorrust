@@ -1,24 +1,14 @@
 use anyhow::Context;
+use poise::serenity_prelude as serenity;
 use poise::CreateReply;
-use serde::{Deserialize, Serialize};
-use serenity::all::{GuildId, User as SerenityUser, UserId};
+use serenity::{GuildId, User as SerenityUser, UserId};
 use sqlx::PgPool;
 
-use crate::{
-    assert_admin, assert_admin_server,
-    database::{
-        serverconfig_model_controller::ServerConfigModelController,
-        user_model_controller::{UserModelController, UserType},
-    },
-    oops,
-    util::{
-        builders::create_default_embed,
-        format::{display, display_time, fdisplay},
-        logger::Logger,
-        random_utils::{get_guilds, get_users, parse_guild_ids},
-    },
-    Context as AppContext,
-};
+use crate::database::serverconfig_model_controller::ServerConfigModelController;
+use crate::database::user_model_controller::{UserModelController, UserType};
+use crate::util::{embeds, format, random_utils};
+use crate::{assert_admin, assert_admin_server, oops};
+use crate::{Context as AppContext, Logger};
 
 /// Subcommands for users.
 #[poise::command(
@@ -46,7 +36,7 @@ async fn list(
         Ok(guild) => guild,
         Err(e) => {
             let msg = format!("Failed to get guild `{server_id}` from the API!");
-            logger.error(&ctx, e, &msg).await;
+            logger.error(ctx, e, &msg).await;
             oops!(ctx, msg);
         }
     };
@@ -56,30 +46,30 @@ async fn list(
         Err(e) => {
             let log_msg = format!(
                 "Failed to get users for {} from the database",
-                display(&guild)
+                format::display(&guild)
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!(
                 "Failed to get users for {} from the database!",
-                fdisplay(&guild)
+                format::fdisplay(&guild)
             );
             oops!(ctx, user_msg);
         }
     };
 
-    let users = match get_users(user_ids, &ctx).await {
+    let users = match random_utils::get_users(user_ids, &ctx).await {
         Ok(users) => users,
         Err(e) => {
             let log_msg = format!(
                 "Failed to get user objects for {} from the discord API",
-                display(&guild)
+                format::display(&guild)
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!(
                 "Failed to get users for {} from the Discord API!",
-                fdisplay(&guild)
+                format::fdisplay(&guild)
             );
             oops!(ctx, user_msg);
         }
@@ -87,12 +77,16 @@ async fn list(
 
     let display_users = users
         .iter()
-        .map(fdisplay)
+        .map(format::display)
         .collect::<Vec<String>>()
         .join("\n");
 
-    let embed = create_default_embed(ctx.author())
-        .title(format!("Whitelisted Users for {}", fdisplay(&guild)))
+    let embed = embeds::CreateJanitorEmbed::new(ctx.author())
+        .into_embed()
+        .title(format!(
+            "Whitelisted Users for {}",
+            format::fdisplay(&guild)
+        ))
         .description(display_users);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
@@ -114,10 +108,16 @@ async fn info(
     let db_user = match UserModelController::get(&ctx.data().db_pool, user.id).await {
         Ok(user) => user,
         Err(e) => {
-            let log_msg = format!("Failed to get user {} from the databse", display(&user));
-            logger.error(&ctx, e, log_msg).await;
+            let log_msg = format!(
+                "Failed to get user {} from the databse",
+                format::display(&user)
+            );
+            logger.error(ctx, e, log_msg).await;
 
-            let user_msg = format!("Failed to get user {} from the databse!", fdisplay(&user));
+            let user_msg = format!(
+                "Failed to get user {} from the databse!",
+                format::fdisplay(&user)
+            );
             oops!(ctx, user_msg);
         }
     };
@@ -125,23 +125,26 @@ async fn info(
     let db_user = match db_user {
         Some(user) => user,
         None => {
-            let user_msg = format!("User {} does not exist in the database!", fdisplay(&user));
+            let user_msg = format!(
+                "User {} does not exist in the database!",
+                format::fdisplay(&user)
+            );
             oops!(ctx, user_msg);
         }
     };
 
-    let guilds = match get_guilds(&db_user.servers, &ctx).await {
+    let guilds = match random_utils::get_guilds(&db_user.servers, &ctx).await {
         Ok(guilds) => guilds,
         Err(e) => {
             let log_msg = format!(
                 "Failed to fetch one or more guilds for {} from the api",
-                display(&user)
+                format::display(&user)
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!(
                 "Failed to fetch one or more guilds for user {} from the Discord API!",
-                fdisplay(&user)
+                format::fdisplay(&user)
             );
             oops!(ctx, user_msg);
         }
@@ -149,14 +152,19 @@ async fn info(
 
     let display_guilds = guilds
         .iter()
-        .map(fdisplay)
+        .map(format::fdisplay)
         .collect::<Vec<String>>()
         .join("\n");
 
-    let embed = create_default_embed(ctx.author())
-        .title(format!("User Info for {}", fdisplay(&user)))
+    let embed = embeds::CreateJanitorEmbed::new(ctx.author())
+        .into_embed()
+        .title(format!("User Info for {}", format::fdisplay(&user)))
         .field("Server", display_guilds, false)
-        .field("Created At", display_time(db_user.created_at), false);
+        .field(
+            "Created At",
+            format::display_time(db_user.created_at),
+            false,
+        );
 
     ctx.send(CreateReply::default().embed(embed)).await?;
 
@@ -177,22 +185,22 @@ async fn add(
     let logger = Logger::get();
     ctx.defer().await?;
 
-    let guild_ids = match parse_guild_ids(&servers) {
+    let guild_ids = match random_utils::parse_guild_ids(&servers) {
         Ok(ids) => ids,
-        Err(e) => {
+        Err(_) => {
             let user_msg = "Failed to parse your provided guild IDs!";
             oops!(ctx, user_msg);
         }
     };
 
-    let guilds = match get_guilds(&guild_ids, &ctx).await {
+    let guilds = match random_utils::get_guilds(&guild_ids, &ctx).await {
         Ok(guilds) => guilds,
         Err(e) => {
             let log_msg = format!(
                 "Failed to get one or more guilds for {} from the discord api",
                 user
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!("Could not get one or more guild(s) for {}!", user);
             oops!(ctx, user_msg);
@@ -210,13 +218,22 @@ async fn add(
         Ok(user) => user,
         Err(e) => {
             if e.to_string().starts_with("Unique") {
-                let msg = format!("User {} is already in the database!", fdisplay(&user));
+                let msg = format!(
+                    "User {} is already in the database!",
+                    format::fdisplay(&user)
+                );
                 oops!(ctx, msg);
             } else {
-                let log_msg = format!("Failed to add user {} to the database", display(&user));
-                logger.error(&ctx, e, log_msg).await;
+                let log_msg = format!(
+                    "Failed to add user {} to the database",
+                    format::display(&user)
+                );
+                logger.error(ctx, e, log_msg).await;
 
-                let user_msg = format!("Failed to add user {} to the database!", fdisplay(&user));
+                let user_msg = format!(
+                    "Failed to add user {} to the database!",
+                    format::fdisplay(&user)
+                );
                 oops!(ctx, user_msg);
             }
         }
@@ -224,7 +241,7 @@ async fn add(
 
     if let Err(e) = handle_server_config_updates(&ctx.data().db_pool, &[], &guild_ids).await {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(&ctx, e, log_msg).await;
+        logger.error(ctx, e, log_msg).await;
     }
 
     ctx.send(
@@ -252,9 +269,9 @@ async fn update(
     ctx.defer().await?;
 
     let new_guild_ids = if let Some(servers) = servers {
-        match parse_guild_ids(&servers) {
+        match random_utils::parse_guild_ids(&servers) {
             Ok(guild_ids) => Some(guild_ids),
-            Err(e) => {
+            Err(_) => {
                 let user_msg = "Failed to parse your provided guild IDs!";
                 oops!(ctx, user_msg);
             }
@@ -268,13 +285,13 @@ async fn update(
         Err(e) => {
             let log_msg = format!(
                 "Failed to get user {} to update in the database",
-                display(&user)
+                format::display(&user)
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!(
                 "Failed to get user {} to update from the database!",
-                fdisplay(&user)
+                format::fdisplay(&user)
             );
             oops!(ctx, user_msg);
         }
@@ -285,7 +302,7 @@ async fn update(
         None => {
             let user_msg = format!(
                 "User {} does not exist in the database! Consider adding them by using `/user add`.",
-                fdisplay(&user)
+                format::fdisplay(&user)
             );
             oops!(ctx, user_msg);
         }
@@ -294,14 +311,14 @@ async fn update(
     let user_type = user_type.unwrap_or(old_user.user_type);
     let updated_ids = new_guild_ids.unwrap_or(old_user.servers.clone());
 
-    let updated_guilds = match get_guilds(&updated_ids, &ctx).await {
+    let updated_guilds = match random_utils::get_guilds(&updated_ids, &ctx).await {
         Ok(guilds) => guilds,
         Err(e) => {
             let log_msg = format!(
                 "Failed to get one or more guilds for {} from the discord api",
                 user
             );
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!("Could not get one or more guild(s) for {}!", user);
             oops!(ctx, user_msg);
@@ -314,11 +331,16 @@ async fn update(
         {
             Ok(updated) => updated,
             Err(e) => {
-                let log_msg = format!("Failed to updated user {} in the database", display(&user));
-                logger.error(&ctx, e, log_msg).await;
+                let log_msg = format!(
+                    "Failed to updated user {} in the database",
+                    format::display(&user)
+                );
+                logger.error(ctx, e, log_msg).await;
 
-                let user_msg =
-                    format!("Failed to updated user {} in the database", fdisplay(&user));
+                let user_msg = format!(
+                    "Failed to updated user {} in the database",
+                    format::fdisplay(&user)
+                );
                 oops!(ctx, user_msg);
             }
         };
@@ -327,7 +349,7 @@ async fn update(
         handle_server_config_updates(&ctx.data().db_pool, &old_user.servers, &updated_ids).await
     {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(&ctx, e, log_msg).await;
+        logger.error(ctx, e, log_msg).await;
     }
 
     ctx.send(
@@ -353,12 +375,15 @@ async fn remove(
     let deleted_user = match UserModelController::delete(&ctx.data().db_pool, user.id).await {
         Ok(user) => user,
         Err(e) => {
-            let log_msg = format!("Failed to delete user {} from the database", display(&user));
-            logger.error(&ctx, e, log_msg).await;
+            let log_msg = format!(
+                "Failed to delete user {} from the database",
+                format::display(&user)
+            );
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = format!(
                 "Failed to delete user {} from the database",
-                fdisplay(&user)
+                format::fdisplay(&user)
             );
             oops!(ctx, user_msg);
         }
@@ -368,14 +393,14 @@ async fn remove(
         handle_server_config_updates(&ctx.data().db_pool, &deleted_user.servers, &[]).await
     {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(&ctx, e, log_msg).await;
+        logger.error(ctx, e, log_msg).await;
     }
 
     ctx.say(format!(
         "Successfully removed user {} from the database.",
-        fdisplay(&user)
+        format::fdisplay(&user)
     ))
-    .await;
+    .await?;
 
     Ok(())
 }

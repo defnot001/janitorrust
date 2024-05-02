@@ -1,18 +1,13 @@
-use std::num::NonZeroU64;
-
+use poise::serenity_prelude as serenity;
 use poise::CreateReply;
-use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelType, GuildChannel, Role, RoleId};
+use serenity::{ChannelType, GuildChannel, Role};
 
-use crate::{
-    assert_user_server,
-    database::serverconfig_model_controller::{
-        ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
-    },
-    oops,
-    util::{logger::Logger, random_utils::parse_role_ids},
-    Context,
+use crate::database::serverconfig_model_controller::{
+    ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
+use crate::util::random_utils;
+use crate::{assert_user_server, oops};
+use crate::{Context as AppContext, Logger};
 
 /// Subcommands for server configs.
 #[poise::command(
@@ -21,13 +16,13 @@ use crate::{
     subcommands("display", "update"),
     subcommand_required
 )]
-pub async fn config(_: Context<'_>) -> anyhow::Result<()> {
+pub async fn config(_: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 /// Display your own serverconfig.
 #[poise::command(slash_command, guild_only = true)]
-async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
+async fn display(ctx: AppContext<'_>) -> anyhow::Result<()> {
     assert_user_server!(ctx);
     let guild_id = ctx.guild_id().unwrap();
 
@@ -46,26 +41,23 @@ async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
             },
             Err(e) => {
                 let log_msg = format!("Failed to query db for server config for {guild_id}");
-                logger.error(&ctx, e, log_msg);
+                logger.error(ctx, e, log_msg).await;
 
                 let user_msg = "Failed to get server config from database!";
                 oops!(ctx, user_msg);
             }
         };
 
-    let embed =
-        match ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx).await
-        {
-            Ok(config) => config.to_embed(ctx.author()),
-            Err(e) => {
-                let log_msg =
-                    format!("Failed to upgrade server config for {guild_id} to full config");
-                logger.error(&ctx, e, log_msg).await;
+    let embed = match ServerConfigComplete::try_from_server_config(config, ctx).await {
+        Ok(config) => config.to_embed(ctx.author()),
+        Err(e) => {
+            let log_msg = format!("Failed to upgrade server config for {guild_id} to full config");
+            logger.error(ctx, e, log_msg).await;
 
-                let user_msg = "Failed to get server config from database!";
-                oops!(ctx, user_msg);
-            }
-        };
+            let user_msg = "Failed to get server config from database!";
+            oops!(ctx, user_msg);
+        }
+    };
 
     ctx.send(CreateReply::default().embed(embed)).await?;
 
@@ -76,7 +68,7 @@ async fn display(ctx: Context<'_>) -> anyhow::Result<()> {
 #[poise::command(slash_command, guild_only = true)]
 #[allow(clippy::too_many_arguments)]
 async fn update(
-    ctx: Context<'_>,
+    ctx: AppContext<'_>,
     #[description = "The channel to log actions to."] log_channel: Option<GuildChannel>,
     #[description = "Ping users when action is taken."] ping_users: Option<bool>,
     #[description = "The role to ping when action is taken. Set this to the bot itself to remove."]
@@ -107,7 +99,7 @@ async fn update(
     }
 
     let ignored_roles = if let Some(r) = ignored_roles {
-        Some(parse_role_ids(&r)?)
+        Some(random_utils::parse_role_ids(&r)?)
     } else {
         None
     };
@@ -128,24 +120,18 @@ async fn update(
             Ok(updated) => updated,
             Err(e) => {
                 let log_msg = format!("Failed to update server config for {guild_id}");
-                logger.error(&ctx, e, log_msg).await;
+                logger.error(ctx, e, log_msg).await;
 
                 let user_msg = "Failed to update server config for your server!";
                 oops!(ctx, user_msg);
             }
         };
 
-    let embed = match ServerConfigComplete::try_from_server_config(
-        updated,
-        &ctx.data().db_pool,
-        &ctx,
-    )
-    .await
-    {
+    let embed = match ServerConfigComplete::try_from_server_config(updated, ctx).await {
         Ok(config) => config.to_embed(ctx.author()),
         Err(e) => {
             let log_msg = format!("Failed to upgrade server config for {guild_id} to full config");
-            logger.error(&ctx, e, log_msg).await;
+            logger.error(ctx, e, log_msg).await;
 
             let user_msg = "Failed to update server config for your server in the datbase!";
             oops!(ctx, user_msg);
