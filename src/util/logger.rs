@@ -1,14 +1,11 @@
 use std::sync::OnceLock;
 
-use anyhow::Context;
 use chrono::Utc;
-use serenity::all::{
-    ChannelId, ChannelType, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
-};
+use poise::serenity_prelude as serenity;
+use serenity::{ChannelId, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage};
 
+use crate::util::embeds::EmbedColor;
 use crate::Context as AppContext;
-
-use super::builders::EmbedColor;
 
 enum LogLevel {
     Warn,
@@ -30,10 +27,12 @@ impl Logger {
     }
 
     pub fn set(channel_id: ChannelId) {
-        LOGGER.set(Logger { channel_id });
+        LOGGER
+            .set(Logger { channel_id })
+            .expect("Failed to set logger!");
     }
 
-    pub async fn warn(&self, ctx: &AppContext<'_>, msg: impl AsRef<str>) {
+    pub async fn warn(&self, ctx: AppContext<'_>, msg: impl AsRef<str>) {
         let msg = sanitize_msg(msg.as_ref());
         tracing::warn!(msg);
 
@@ -50,7 +49,7 @@ impl Logger {
 
     pub async fn error(
         &self,
-        ctx: &AppContext<'_>,
+        ctx: AppContext<'_>,
         e: impl std::fmt::Display,
         log_msg: impl AsRef<str>,
     ) {
@@ -70,7 +69,7 @@ impl Logger {
 
     async fn log_embed<E>(
         msg: &str,
-        ctx: &AppContext<'_>,
+        ctx: AppContext<'_>,
         log_level: LogLevel,
         error: Option<E>,
     ) -> CreateEmbed

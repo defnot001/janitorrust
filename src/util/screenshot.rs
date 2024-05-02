@@ -1,19 +1,20 @@
-use std::{
-    fs::File,
-    io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
-};
-
 use anyhow::Context;
 use chrono::{Datelike, Utc};
 use poise::serenity_prelude as serenity;
-use serenity::{Attachment, UserId};
-use tokio::fs::remove_file;
+use serenity::{Attachment, CreateAttachment, UserId};
+use tokio::fs::{remove_file, write, File};
 
 pub struct FileManager;
 
 impl FileManager {
-    pub async fn save(attachment: Attachment, user_id: UserId) -> anyhow::Result<()> {
+    pub async fn get(path: &str) -> anyhow::Result<CreateAttachment> {
+        let file = File::open(format!("screenshots/{path}")).await?;
+        CreateAttachment::file(&file, path).await.context(format!(
+            "Failed to create attachment from file at path {path}"
+        ))
+    }
+
+    pub async fn save(attachment: Attachment, user_id: UserId) -> anyhow::Result<String> {
         let now = Utc::now();
         let date = format!("{}-{}-{}", now.year(), now.month(), now.day());
 
@@ -37,13 +38,10 @@ impl FileManager {
         }
 
         let attachment_content = attachment.download().await?;
+        let file_name = format!("{date}_{}.{file_ext}", user_id);
 
-        let file = File::create(format!("screenshots/{date}_{}.{file_ext}", user_id))?;
-
-        let mut writer = BufWriter::new(file);
-        writer.write_all(&attachment_content)?;
-
-        Ok(())
+        write(format!("screenshots/{}", &file_name), attachment_content).await?;
+        Ok(file_name)
     }
 
     pub async fn delete(path: &str) -> anyhow::Result<()> {

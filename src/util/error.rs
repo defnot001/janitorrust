@@ -1,10 +1,5 @@
-use std::fmt::Debug;
-use std::fmt::Display;
-
 use poise::FrameworkError;
 
-use crate::util::logger::sanitize_msg;
-use crate::Context as AppContext;
 use crate::Data;
 
 #[allow(clippy::needless_lifetimes)]

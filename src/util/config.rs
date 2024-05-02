@@ -1,6 +1,7 @@
 use anyhow::Context;
+use poise::serenity_prelude as serenity;
 use serde::Deserialize;
-use serenity::all::{ChannelId, GuildId, UserId};
+use serenity::{ChannelId, GuildId, UserId};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {

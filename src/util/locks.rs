@@ -1,11 +1,10 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, OnceLock, Weak,
-};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 
 use dashmap::DashMap;
-use serenity::all::UserId;
-use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard};
+use poise::serenity_prelude as serenity;
+use serenity::UserId;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 pub struct SelfRemoving {
     id: u64,
