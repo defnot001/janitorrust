@@ -6,8 +6,8 @@ use crate::database::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
 use crate::util::random_utils;
+use crate::Context as AppContext;
 use crate::{assert_user_server, oops};
-use crate::{Context as AppContext, Logger};
 
 /// Subcommands for server configs.
 #[poise::command(
@@ -24,43 +24,22 @@ pub async fn config(_: AppContext<'_>) -> anyhow::Result<()> {
 #[poise::command(slash_command, guild_only = true)]
 async fn display(ctx: AppContext<'_>) -> anyhow::Result<()> {
     assert_user_server!(ctx);
-    let guild_id = ctx.guild_id().unwrap();
-
-    let logger = Logger::get();
-
     ctx.defer().await?;
 
-    let config =
-        match ServerConfigModelController::get_by_guild_id(&ctx.data().db_pool, guild_id).await {
-            Ok(config) => match config {
-                Some(config) => config,
-                None => {
-                    let user_msg = "Cannot find the config for your server in the database!";
-                    oops!(ctx, user_msg);
-                }
-            },
-            Err(e) => {
-                let log_msg = format!("Failed to query db for server config for {guild_id}");
-                logger.error(ctx, e, log_msg).await;
+    let guild_id = ctx.guild_id().unwrap();
 
-                let user_msg = "Failed to get server config from database!";
-                oops!(ctx, user_msg);
-            }
-        };
-
-    let embed = match ServerConfigComplete::try_from_server_config(config, ctx).await {
-        Ok(config) => config.to_embed(ctx.author()),
-        Err(e) => {
-            let log_msg = format!("Failed to upgrade server config for {guild_id} to full config");
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = "Failed to get server config from database!";
-            oops!(ctx, user_msg);
-        }
+    let Some(config) =
+        ServerConfigModelController::get_by_guild_id(&ctx.data().db_pool, guild_id).await?
+    else {
+        let user_msg = "Your server doesn't have a config in the database!";
+        oops!(ctx, user_msg);
     };
 
-    ctx.send(CreateReply::default().embed(embed)).await?;
+    let embed = ServerConfigComplete::try_from_server_config(config, ctx)
+        .await?
+        .to_embed(ctx.author());
 
+    ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
 }
 
@@ -85,16 +64,15 @@ async fn update(
     ignored_roles: Option<String>,
 ) -> anyhow::Result<()> {
     assert_user_server!(ctx);
-    let guild_id = ctx.guild_id().unwrap();
-
-    let logger = Logger::get();
-
     ctx.defer().await?;
+
+    let guild_id = ctx.guild_id().unwrap();
 
     if let Some(c) = &log_channel {
         if c.kind != ChannelType::Text {
-            let msg = format!("{} is not a text channel.", c.name);
-            oops!(ctx, msg);
+            ctx.say(format!("{} is not a text channel.", c.name))
+                .await?;
+            return Ok(());
         }
     }
 
@@ -104,10 +82,13 @@ async fn update(
         None
     };
 
-    let update = UpdateServerConfig {
-        log_channel: log_channel.map(|c| c.id),
+    let log_channel = log_channel.map(|c| c.id);
+    let ping_role = ping_role.map(|r| r.id);
+
+    let update_values = UpdateServerConfig {
+        log_channel,
         ping_users,
-        ping_role: ping_role.map(|r| r.id),
+        ping_role,
         spam_action_level,
         impersonation_action_level,
         bigotry_action_level,
@@ -116,34 +97,16 @@ async fn update(
     };
 
     let updated =
-        match ServerConfigModelController::update(&ctx.data().db_pool, guild_id, update).await {
-            Ok(updated) => updated,
-            Err(e) => {
-                let log_msg = format!("Failed to update server config for {guild_id}");
-                logger.error(ctx, e, log_msg).await;
+        ServerConfigModelController::update(&ctx.data().db_pool, guild_id, update_values).await?;
 
-                let user_msg = "Failed to update server config for your server!";
-                oops!(ctx, user_msg);
-            }
-        };
+    let embed = ServerConfigComplete::try_from_server_config(updated, ctx)
+        .await?
+        .to_embed(ctx.author());
 
-    let embed = match ServerConfigComplete::try_from_server_config(updated, ctx).await {
-        Ok(config) => config.to_embed(ctx.author()),
-        Err(e) => {
-            let log_msg = format!("Failed to upgrade server config for {guild_id} to full config");
-            logger.error(ctx, e, log_msg).await;
+    let reply = CreateReply::default()
+        .embed(embed)
+        .content("Successfully updated your server config.");
 
-            let user_msg = "Failed to update server config for your server in the datbase!";
-            oops!(ctx, user_msg);
-        }
-    };
-
-    ctx.send(
-        CreateReply::default()
-            .embed(embed)
-            .content("Successfully updated your server config."),
-    )
-    .await?;
-
+    ctx.send(reply).await?;
     Ok(())
 }
