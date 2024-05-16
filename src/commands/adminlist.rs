@@ -1,26 +1,22 @@
 use poise::serenity_prelude as serenity;
 use serenity::UserId;
 
+use crate::assert_user;
 use crate::database::admin_model_controller::AdminModelController;
 use crate::util::format;
-use crate::{assert_user, oops};
-use crate::{Context as AppContext, Logger};
+use crate::Context as AppContext;
 
 /// Get the list of admins of this bot.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn adminlist(ctx: AppContext<'_>) -> anyhow::Result<()> {
     assert_user!(ctx);
-
     ctx.defer().await?;
 
-    let admins = match AdminModelController::get_all(&ctx.data().db_pool).await {
-        Ok(admins) => admins.into_iter().map(|a| a.id).collect::<Vec<UserId>>(),
-        Err(e) => {
-            let msg = "Failed get the admins from the from the database";
-            Logger::get().error(ctx, e, msg).await;
-            oops!(ctx, msg);
-        }
-    };
+    let admins = AdminModelController::get_all(&ctx.data().db_pool)
+        .await?
+        .into_iter()
+        .map(|a| a.id)
+        .collect::<Vec<UserId>>();
 
     let mut users = Vec::new();
 
