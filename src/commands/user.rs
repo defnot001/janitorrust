@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use crate::database::serverconfig_model_controller::ServerConfigModelController;
 use crate::database::user_model_controller::{UserModelController, UserType};
 use crate::util::{embeds, format, random_utils};
-use crate::{assert_admin, assert_admin_server, oops};
+use crate::{assert_admin, assert_admin_server};
 use crate::{Context as AppContext, Logger};
 
 /// Subcommands for users.
@@ -29,53 +29,18 @@ async fn list(
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-    let logger = Logger::get();
     ctx.defer().await?;
 
-    let guild = match server_id.to_partial_guild(&ctx).await {
-        Ok(guild) => guild,
-        Err(e) => {
-            let msg = format!("Failed to get guild `{server_id}` from the API!");
-            logger.error(ctx, e, &msg).await;
-            oops!(ctx, msg);
-        }
-    };
+    let guild = server_id.to_partial_guild(&ctx).await?;
 
-    let user_ids = match UserModelController::get_by_guild(&ctx.data().db_pool, &guild.id).await {
-        Ok(users) => users.into_iter().map(|u| u.id).collect::<Vec<UserId>>(),
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get users for {} from the database",
-                format::display(&guild)
-            );
-            logger.error(ctx, e, log_msg).await;
+    let user_ids = UserModelController::get_by_guild(&ctx.data().db_pool, &guild.id)
+        .await?
+        .into_iter()
+        .map(|u| u.id)
+        .collect::<Vec<UserId>>();
 
-            let user_msg = format!(
-                "Failed to get users for {} from the database!",
-                format::fdisplay(&guild)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let users = match random_utils::get_users(user_ids, &ctx).await {
-        Ok(users) => users,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get user objects for {} from the discord API",
-                format::display(&guild)
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!(
-                "Failed to get users for {} from the Discord API!",
-                format::fdisplay(&guild)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let display_users = users
+    let display_users = random_utils::get_users(user_ids, &ctx)
+        .await?
         .iter()
         .map(format::display)
         .collect::<Vec<String>>()
@@ -102,55 +67,19 @@ async fn info(
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-    let logger = Logger::get();
     ctx.defer().await?;
 
-    let db_user = match UserModelController::get(&ctx.data().db_pool, user.id).await {
-        Ok(user) => user,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get user {} from the databse",
-                format::display(&user)
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!(
-                "Failed to get user {} from the databse!",
-                format::fdisplay(&user)
-            );
-            oops!(ctx, user_msg);
-        }
+    let Some(db_user) = UserModelController::get(&ctx.data().db_pool, user.id).await? else {
+        let reply = format!(
+            "User {} does not exist in the database!",
+            format::fdisplay(&user)
+        );
+        ctx.say(reply).await?;
+        return Ok(());
     };
 
-    let db_user = match db_user {
-        Some(user) => user,
-        None => {
-            let user_msg = format!(
-                "User {} does not exist in the database!",
-                format::fdisplay(&user)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let guilds = match random_utils::get_guilds(&db_user.servers, &ctx).await {
-        Ok(guilds) => guilds,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to fetch one or more guilds for {} from the api",
-                format::display(&user)
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!(
-                "Failed to fetch one or more guilds for user {} from the Discord API!",
-                format::fdisplay(&user)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let display_guilds = guilds
+    let display_guilds = random_utils::get_guilds(&db_user.servers, &ctx)
+        .await?
         .iter()
         .map(format::fdisplay)
         .collect::<Vec<String>>()
@@ -182,75 +111,24 @@ async fn add(
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-    let logger = Logger::get();
     ctx.defer().await?;
 
-    let guild_ids = match random_utils::parse_guild_ids(&servers) {
-        Ok(ids) => ids,
-        Err(_) => {
-            let user_msg = "Failed to parse your provided guild IDs!";
-            oops!(ctx, user_msg);
-        }
-    };
+    let guild_ids = random_utils::parse_guild_ids(&servers)?;
+    let guilds = random_utils::get_guilds(&guild_ids, &ctx).await?;
 
-    let guilds = match random_utils::get_guilds(&guild_ids, &ctx).await {
-        Ok(guilds) => guilds,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get one or more guilds for {} from the discord api",
-                user
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!("Could not get one or more guild(s) for {}!", user);
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let added_user = match UserModelController::create(
-        &ctx.data().db_pool,
-        user.id,
-        user_type,
-        &guild_ids,
-    )
-    .await
-    {
-        Ok(user) => user,
-        Err(e) => {
-            if e.to_string().starts_with("Unique") {
-                let msg = format!(
-                    "User {} is already in the database!",
-                    format::fdisplay(&user)
-                );
-                oops!(ctx, msg);
-            } else {
-                let log_msg = format!(
-                    "Failed to add user {} to the database",
-                    format::display(&user)
-                );
-                logger.error(ctx, e, log_msg).await;
-
-                let user_msg = format!(
-                    "Failed to add user {} to the database!",
-                    format::fdisplay(&user)
-                );
-                oops!(ctx, user_msg);
-            }
-        }
-    };
+    let added_user =
+        UserModelController::create(&ctx.data().db_pool, user.id, user_type, &guild_ids).await?;
 
     if let Err(e) = handle_server_config_updates(&ctx.data().db_pool, &[], &guild_ids).await {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(ctx, e, log_msg).await;
+        Logger::get().error(ctx, e, log_msg).await;
     }
 
-    ctx.send(
-        CreateReply::default()
-            .embed(added_user.to_embed(ctx.author(), &user, &guilds))
-            .content("User added to the database!"),
-    )
-    .await?;
+    let reply = CreateReply::default()
+        .embed(added_user.to_embed(ctx.author(), &user, &guilds))
+        .content("User added to the database!");
 
+    ctx.send(reply).await?;
     Ok(())
 }
 
@@ -265,100 +143,51 @@ async fn update(
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-    let logger = Logger::get();
     ctx.defer().await?;
 
     let new_guild_ids = if let Some(servers) = servers {
-        match random_utils::parse_guild_ids(&servers) {
-            Ok(guild_ids) => Some(guild_ids),
-            Err(_) => {
-                let user_msg = "Failed to parse your provided guild IDs!";
-                oops!(ctx, user_msg);
-            }
-        }
+        let parsed = random_utils::parse_guild_ids(&servers)?;
+        Some(parsed)
     } else {
         None
     };
 
-    let old_user = match UserModelController::get(&ctx.data().db_pool, user.id).await {
-        Ok(user) => user,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get user {} to update in the database",
-                format::display(&user)
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!(
-                "Failed to get user {} to update from the database!",
-                format::fdisplay(&user)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let old_user = match old_user {
+    let old_user = match UserModelController::get(&ctx.data().db_pool, user.id).await? {
         Some(user) => user,
         None => {
-            let user_msg = format!(
+            let reply = format!(
                 "User {} does not exist in the database! Consider adding them by using `/user add`.",
                 format::fdisplay(&user)
             );
-            oops!(ctx, user_msg);
+            ctx.say(reply).await?;
+            return Ok(());
         }
     };
 
-    let user_type = user_type.unwrap_or(old_user.user_type);
+    let updated_user_type = user_type.unwrap_or(old_user.user_type);
     let updated_ids = new_guild_ids.unwrap_or(old_user.servers.clone());
+    let updated_guilds = random_utils::get_guilds(&updated_ids, &ctx).await?;
 
-    let updated_guilds = match random_utils::get_guilds(&updated_ids, &ctx).await {
-        Ok(guilds) => guilds,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get one or more guilds for {} from the discord api",
-                user
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!("Could not get one or more guild(s) for {}!", user);
-            oops!(ctx, user_msg);
-        }
-    };
-
-    let updated_user =
-        match UserModelController::update(&ctx.data().db_pool, user.id, user_type, &updated_ids)
-            .await
-        {
-            Ok(updated) => updated,
-            Err(e) => {
-                let log_msg = format!(
-                    "Failed to updated user {} in the database",
-                    format::display(&user)
-                );
-                logger.error(ctx, e, log_msg).await;
-
-                let user_msg = format!(
-                    "Failed to updated user {} in the database",
-                    format::fdisplay(&user)
-                );
-                oops!(ctx, user_msg);
-            }
-        };
+    let updated_user = UserModelController::update(
+        &ctx.data().db_pool,
+        user.id,
+        updated_user_type,
+        &updated_ids,
+    )
+    .await?;
 
     if let Err(e) =
         handle_server_config_updates(&ctx.data().db_pool, &old_user.servers, &updated_ids).await
     {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(ctx, e, log_msg).await;
+        Logger::get().error(ctx, e, log_msg).await;
     }
 
-    ctx.send(
-        CreateReply::default()
-            .embed(updated_user.to_embed(ctx.author(), &user, &updated_guilds))
-            .content("User updated in the database!"),
-    )
-    .await?;
+    let reply = CreateReply::default()
+        .embed(updated_user.to_embed(ctx.author(), &user, &updated_guilds))
+        .content("User updated in the database!");
 
+    ctx.send(reply).await?;
     Ok(())
 }
 
@@ -369,39 +198,23 @@ async fn remove(
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);
-    let logger = Logger::get();
     ctx.defer().await?;
 
-    let deleted_user = match UserModelController::delete(&ctx.data().db_pool, user.id).await {
-        Ok(user) => user,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to delete user {} from the database",
-                format::display(&user)
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = format!(
-                "Failed to delete user {} from the database",
-                format::fdisplay(&user)
-            );
-            oops!(ctx, user_msg);
-        }
-    };
+    let deleted_user = UserModelController::delete(&ctx.data().db_pool, user.id).await?;
 
     if let Err(e) =
         handle_server_config_updates(&ctx.data().db_pool, &deleted_user.servers, &[]).await
     {
         let log_msg = "Failed handle potential server config updates";
-        logger.error(ctx, e, log_msg).await;
+        Logger::get().error(ctx, e, log_msg).await;
     }
 
-    ctx.say(format!(
+    let reply = format!(
         "Successfully removed user {} from the database.",
         format::fdisplay(&user)
-    ))
-    .await?;
+    );
 
+    ctx.say(reply).await?;
     Ok(())
 }
 
