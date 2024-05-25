@@ -6,11 +6,11 @@ use crate::util::format;
 use crate::util::logger::Logger;
 use crate::Context as AppContext;
 
-use super::{admin, listener, send, moderate, webhooks};
 use super::listener::BroadcastListener;
-use super::send::SendBroadcastMessageOptions;
 use super::moderate::ModerateOptions;
+use super::send::SendBroadcastMessageOptions;
 use super::webhooks::BroadcastWebhookOptions;
+use super::{admin, listener, moderate, send, webhooks};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BroadcastType {
@@ -81,12 +81,14 @@ pub async fn broadcast<'a>(options: BroadcastOptions<'a>) -> anyhow::Result<()> 
         Logger::get().error(ctx, e, log_msg).await;
     }
 
-    if notify_user(ctx, target_user).await.is_err() {
-        let log_msg = format!(
-            "Failed to inform {} about the moderation actions in DM",
-            format::display(target_user)
-        );
-        Logger::get().warn(ctx, log_msg).await;
+    if broadcast_type == BroadcastType::Report {
+        if notify_user(ctx, target_user).await.is_err() {
+            let log_msg = format!(
+                "Failed to inform {} about the moderation actions in DM",
+                format::display(target_user)
+            );
+            Logger::get().warn(ctx, log_msg).await;
+        }
     }
 
     let listener_options = BroadcastToListenersOptions {
