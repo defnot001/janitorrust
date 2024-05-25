@@ -80,7 +80,8 @@ impl BadActor {
     pub async fn to_broadcast_embed(
         &self,
         ctx: AppContext<'_>,
-        origin_guild: &PartialGuild,
+        origin_guild_id: GuildId,
+        origin_guild: Option<&PartialGuild>,
         target_user: &User,
     ) -> (CreateEmbed, Option<CreateAttachment>) {
         let explanation = self
@@ -101,6 +102,12 @@ impl BadActor {
             .unwrap_or(target_user.default_avatar_url());
         let author = format!("{} (`{}`)", ctx.author().mention(), ctx.author().id);
 
+        let display_guild = if let Some(g) = origin_guild {
+            format::fdisplay(g)
+        } else {
+            origin_guild_id.to_string()
+        };
+
         let embed = CreateEmbed::default()
             .title(title)
             .timestamp(Utc::now())
@@ -109,7 +116,7 @@ impl BadActor {
             .field("Active", random_utils::display_bool(self.is_active), true)
             .field("Type", self.actor_type.to_string(), true)
             .field("Explanation", explanation, false)
-            .field("Server of Origin", format::fdisplay(origin_guild), false)
+            .field("Server of Origin", display_guild, false)
             .field("Last Updated By", author, false);
 
         // add footer
@@ -202,6 +209,7 @@ pub struct CreateBadActorOptions {
     pub updated_by_user_id: UserId,
 }
 
+#[derive(Debug, poise::ChoiceParameter)]
 pub enum BadActorQueryType {
     All,
     Active,
