@@ -4,8 +4,9 @@ use poise::CreateReply;
 use serenity::{GuildId, User as SerenityUser, UserId};
 use sqlx::PgPool;
 
-use crate::database::serverconfig_model_controller::ServerConfigModelController;
-use crate::database::user_model_controller::{UserModelController, UserType};
+use crate::database::controllers::serverconfig_model_controller::ServerConfigModelController;
+use crate::database::controllers::user_model_controller::CreateJanitorUser;
+use crate::database::controllers::user_model_controller::{UserModelController, UserType};
 use crate::util::{embeds, format, random_utils};
 use crate::{assert_admin, assert_admin_server};
 use crate::{Context as AppContext, Logger};
@@ -33,10 +34,10 @@ async fn list(
 
     let guild = server_id.to_partial_guild(&ctx).await?;
 
-    let user_ids = UserModelController::get_by_guild(&ctx.data().db_pool, &guild.id)
+    let user_ids = UserModelController::get_by_guild(&ctx.data().db_pool, guild.id)
         .await?
         .into_iter()
-        .map(|u| u.id)
+        .map(|u| u.user_id)
         .collect::<Vec<UserId>>();
 
     let display_users = random_utils::get_users(user_ids, &ctx)
@@ -78,7 +79,7 @@ async fn info(
         return Ok(());
     };
 
-    let display_guilds = random_utils::get_guilds(&db_user.servers, &ctx)
+    let display_guilds = random_utils::get_guilds(&db_user.guild_ids, &ctx)
         .await?
         .iter()
         .map(format::fdisplay)
@@ -116,8 +117,13 @@ async fn add(
     let guild_ids = random_utils::parse_guild_ids(&servers)?;
     let guilds = random_utils::get_guilds(&guild_ids, &ctx).await?;
 
-    let added_user =
-        UserModelController::create(&ctx.data().db_pool, user.id, user_type, &guild_ids).await?;
+    let create_user = CreateJanitorUser {
+        guild_ids: &guild_ids,
+        user_id: user.id,
+        user_type,
+    };
+
+    let added_user = UserModelController::create(&ctx.data().db_pool, create_user).await?;
 
     if let Err(e) = handle_server_config_updates(&ctx.data().db_pool, &[], &guild_ids).await {
         let log_msg = "Failed handle potential server config updates";
@@ -165,19 +171,19 @@ async fn update(
     };
 
     let updated_user_type = user_type.unwrap_or(old_user.user_type);
-    let updated_ids = new_guild_ids.unwrap_or(old_user.servers.clone());
+    let updated_ids = new_guild_ids.unwrap_or(old_user.guild_ids.clone());
     let updated_guilds = random_utils::get_guilds(&updated_ids, &ctx).await?;
 
-    let updated_user = UserModelController::update(
-        &ctx.data().db_pool,
-        user.id,
-        updated_user_type,
-        &updated_ids,
-    )
-    .await?;
+    let create_user = CreateJanitorUser {
+        user_id: user.id,
+        guild_ids: &updated_ids,
+        user_type: updated_user_type,
+    };
+
+    let updated_user = UserModelController::update(&ctx.data().db_pool, create_user).await?;
 
     if let Err(e) =
-        handle_server_config_updates(&ctx.data().db_pool, &old_user.servers, &updated_ids).await
+        handle_server_config_updates(&ctx.data().db_pool, &old_user.guild_ids, &updated_ids).await
     {
         let log_msg = "Failed handle potential server config updates";
         Logger::get().error(ctx, e, log_msg).await;
@@ -203,7 +209,7 @@ async fn remove(
     let deleted_user = UserModelController::delete(&ctx.data().db_pool, user.id).await?;
 
     if let Err(e) =
-        handle_server_config_updates(&ctx.data().db_pool, &deleted_user.servers, &[]).await
+        handle_server_config_updates(&ctx.data().db_pool, &deleted_user.guild_ids, &[]).await
     {
         let log_msg = "Failed handle potential server config updates";
         Logger::get().error(ctx, e, log_msg).await;

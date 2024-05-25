@@ -1,9 +1,11 @@
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
-use serenity::{CreateEmbed, GuildId, User, UserId};
+use serenity::{CreateEmbed, GuildId, User};
 
 use crate::assert_user;
-use crate::database::scores_model_controller::{Scoreboard, ScoresModelController};
+use crate::database::controllers::scores_model_controller::{
+    GuildScoreboard, ScoresModelController, UserScoreboard,
+};
 use crate::util::{embeds, format, random_utils};
 use crate::Context as AppContext;
 
@@ -115,14 +117,14 @@ async fn leaderboard(
 }
 
 async fn build_user_leaderboard(
-    scores: Vec<Scoreboard>,
+    scores: Vec<UserScoreboard>,
     interaction_user: &User,
     ctx: AppContext<'_>,
 ) -> anyhow::Result<CreateEmbed> {
     let mut leaderboard = Vec::with_capacity(scores.len());
 
     for (i, s) in scores.into_iter().enumerate() {
-        let user = UserId::from(s.discord_id).to_user(ctx).await?;
+        let user = s.user_id.to_user(ctx).await?;
 
         if s.score == 0 {
             continue;
@@ -149,14 +151,14 @@ async fn build_user_leaderboard(
 }
 
 async fn build_guilds_leaderboard(
-    scores: Vec<Scoreboard>,
+    scores: Vec<GuildScoreboard>,
     interaction_user: &User,
     ctx: AppContext<'_>,
 ) -> anyhow::Result<CreateEmbed> {
     let mut leaderboard = Vec::with_capacity(scores.len());
 
     for (i, s) in scores.into_iter().enumerate() {
-        let guild = GuildId::from(s.discord_id).to_partial_guild(ctx).await?;
+        let guild = s.guild_id.to_partial_guild(ctx).await?;
 
         if s.score == 0 {
             continue;

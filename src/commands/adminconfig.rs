@@ -1,7 +1,7 @@
 use poise::CreateReply;
 
-use crate::database::badactor_model_controller::BadActorModelController;
-use crate::database::serverconfig_model_controller::{
+use crate::database::controllers::badactor_model_controller::BadActorModelController;
+use crate::database::controllers::serverconfig_model_controller::{
     ServerConfigComplete, ServerConfigModelController,
 };
 use crate::util::random_utils::parse_guild_ids;

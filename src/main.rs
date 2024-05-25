@@ -1,8 +1,10 @@
-#![allow(dead_code, unused_variables)]
+// #![allow(dead_code, unused_variables)]
+#![warn(clippy::needless_borrow)]
 
 mod commands;
 mod database;
 mod util;
+mod broadcast;
 
 use commands::{adminconfig, adminlist, badactor, config, scores, user};
 use poise::serenity_prelude as serenity;
@@ -13,6 +15,9 @@ use util::config::Config;
 use util::logger::Logger;
 use util::{error, format};
 
+use crate::database::migrate::migrate_db;
+
+#[derive(Debug)]
 pub struct Data {
     pub db_pool: sqlx::PgPool,
     pub config: Config,
@@ -36,6 +41,8 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
     tracing::info!("Successfully connected to the database!");
+
+    migrate_db(&db_pool).await;
 
     let intents = serenity::GatewayIntents::GUILDS | serenity::GatewayIntents::GUILD_MODERATION;
     let token = config.bot_token.clone();

@@ -85,6 +85,7 @@ pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub enum TimestampStyle {
     ShortTime,
     LongTime,

@@ -48,8 +48,12 @@ impl FileManager {
         remove_file(format!("screenshots/{path}"))
             .await
             .context(format!(
-                "Failed to delete file with path {path} from the screenshots."
-            ))
+                "Failed to delete screenshot {path} from the file system."
+            ))?;
+
+        tracing::info!("Deleted screenshot {path} from the file system.");
+
+        Ok(())
     }
 }
 

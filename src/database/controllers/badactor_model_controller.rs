@@ -1,5 +1,7 @@
 use std::fmt::Display;
+use std::str::FromStr;
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{
@@ -11,20 +13,6 @@ use sqlx::{FromRow, PgPool};
 use crate::util::{format, random_utils, screenshot};
 use crate::{Context as AppContext, Logger};
 
-#[derive(Debug, FromRow)]
-struct DbBadActor {
-    id: i64,
-    user_id: String,
-    is_active: bool,
-    actor_type: String,
-    screenshot_proof: Option<String>,
-    explanation: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    originally_created_in: String,
-    last_changed_by: String,
-}
-
 #[derive(Debug, Copy, Clone, poise::ChoiceParameter)]
 pub enum BadActorType {
     Spam,
@@ -35,11 +23,38 @@ pub enum BadActorType {
 impl Display for BadActorType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Spam => write!(f, "Spam"),
-            Self::Impersonation => write!(f, "Impersonation"),
-            Self::Bigotry => write!(f, "Bigotry"),
+            Self::Spam => write!(f, "spam"),
+            Self::Impersonation => write!(f, "impersonation"),
+            Self::Bigotry => write!(f, "bigotry"),
         }
     }
+}
+
+impl FromStr for BadActorType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "spam" => Ok(Self::Spam),
+            "impersonation" => Ok(Self::Impersonation),
+            "bigotry" => Ok(Self::Bigotry),
+            _ => anyhow::bail!("Invalid actor type: {}", s),
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct DbBadActor {
+    id: i64,
+    user_id: String,
+    is_active: bool,
+    actor_type: String,
+    origin_guild_id: String,
+    screenshot_proof: Option<String>,
+    explanation: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    updated_by_user_id: String,
 }
 
 #[derive(Debug)]
@@ -48,12 +63,12 @@ pub struct BadActor {
     pub user_id: UserId,
     pub is_active: bool,
     pub actor_type: BadActorType,
+    pub origin_guild_id: GuildId,
     pub screenshot_proof: Option<String>,
     pub explanation: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub originally_created_in: GuildId,
-    pub last_changed_by: UserId,
+    pub updated_by_user_id: UserId,
 }
 
 impl BadActor {
@@ -61,6 +76,7 @@ impl BadActor {
         self.user_id.to_user(ctx).await.ok()
     }
 
+    /// Infailliable method to get a broadcast embed from a bad actor.
     pub async fn to_broadcast_embed(
         &self,
         ctx: AppContext<'_>,
@@ -142,27 +158,38 @@ impl TryFrom<DbBadActor> for BadActor {
     type Error = anyhow::Error;
 
     fn try_from(db_bad_actor: DbBadActor) -> Result<Self, Self::Error> {
-        let actor_type = match db_bad_actor.actor_type.as_str() {
-            "spam" => BadActorType::Spam,
-            "impersonation" => BadActorType::Impersonation,
-            "bigotry" => BadActorType::Bigotry,
-            _ => return Err(anyhow::anyhow!("Invalid actor type")),
+        let DbBadActor {
+            id,
+            is_active,
+            screenshot_proof,
+            explanation,
+            created_at,
+            updated_at,
+            ..
+        } = db_bad_actor;
+
+        let context = "Failed to convert [DbBadActor] to [BadActor].";
+
+        let actor_type = BadActorType::from_str(&db_bad_actor.actor_type).context(context)?;
+        let user_id = UserId::from_str(&db_bad_actor.user_id).context(context)?;
+        let origin_guild_id = GuildId::from_str(&db_bad_actor.origin_guild_id).context(context)?;
+        let updated_by_user_id =
+            UserId::from_str(&db_bad_actor.updated_by_user_id).context(context)?;
+
+        let bad_actor = BadActor {
+            id,
+            user_id,
+            is_active,
+            actor_type,
+            screenshot_proof,
+            explanation,
+            created_at,
+            updated_at,
+            origin_guild_id,
+            updated_by_user_id,
         };
 
-        Ok(BadActor {
-            id: db_bad_actor.id,
-            user_id: UserId::from(db_bad_actor.user_id.parse::<u64>()?),
-            is_active: db_bad_actor.is_active,
-            actor_type,
-            screenshot_proof: db_bad_actor.screenshot_proof,
-            explanation: db_bad_actor.explanation,
-            created_at: db_bad_actor.created_at,
-            updated_at: db_bad_actor.updated_at,
-            originally_created_in: GuildId::from(
-                db_bad_actor.originally_created_in.parse::<u64>()?,
-            ),
-            last_changed_by: UserId::from(db_bad_actor.last_changed_by.parse::<u64>()?),
-        })
+        Ok(bad_actor)
     }
 }
 
@@ -171,8 +198,8 @@ pub struct CreateBadActorOptions {
     pub actor_type: BadActorType,
     pub screenshot_proof: Option<String>,
     pub explanation: Option<String>,
-    pub originally_created_in: GuildId,
-    pub last_changed_by: UserId,
+    pub origin_guild_id: GuildId,
+    pub updated_by_user_id: UserId,
 }
 
 pub enum BadActorQueryType {
@@ -184,38 +211,43 @@ pub enum BadActorQueryType {
 pub struct BadActorModelController;
 
 impl BadActorModelController {
+    /// Create a new bad actor entry in the database. Returns the newly created bad actor.
     pub async fn create(
         db_pool: &PgPool,
         options: CreateBadActorOptions,
     ) -> anyhow::Result<BadActor> {
-        let actor_type = match options.actor_type {
-            BadActorType::Spam => "spam",
-            BadActorType::Impersonation => "impersonation",
-            BadActorType::Bigotry => "bigotry",
-        };
+        let CreateBadActorOptions {
+            user_id,
+            actor_type,
+            screenshot_proof,
+            explanation,
+            origin_guild_id,
+            updated_by_user_id,
+        } = options;
 
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            INSERT INTO badactors (user_id, is_active, actor_type, screenshot_proof, explanation, originally_created_in, last_changed_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO bad_actors (user_id, actor_type, origin_guild_id, screenshot_proof, explanation, updated_by_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *;
             "#,
         )
-        .bind(options.user_id.to_string())
-        .bind(true)
-        .bind(actor_type)
-        .bind(options.screenshot_proof)
-        .bind(options.explanation)
-        .bind(options.originally_created_in.to_string())
-        .bind(options.last_changed_by.to_string())
+        .bind(user_id.to_string())
+        .bind(actor_type.to_string())
+        .bind(origin_guild_id.to_string())
+        .bind(screenshot_proof)
+        .bind(explanation)
+        .bind(updated_by_user_id.to_string())
         .fetch_one(db_pool)
-        .await?
+        .await
+        .context(format!("Failed to create bad actor entry for user {user_id} in the `bad_actors` table"))?
         .try_into()
     }
 
+    /// Returns if the given user ID currently has an active case.
     pub async fn has_active_case(db_pool: &PgPool, user_id: UserId) -> bool {
         sqlx::query_as::<_, DbBadActor>(
-            "SELECT * FROM badactors WHERE user_id = $1 AND is_active = true;",
+            "SELECT * FROM bad_actors WHERE user_id = $1 AND is_active = true;",
         )
         .bind(user_id.to_string())
         .fetch_optional(db_pool)
@@ -224,41 +256,55 @@ impl BadActorModelController {
         .unwrap_or(false)
     }
 
+    /// Get all entries for a given discord user ID.
     pub async fn get_by_user_id(
         db_pool: &PgPool,
         user_id: UserId,
     ) -> anyhow::Result<Vec<BadActor>> {
-        sqlx::query_as::<_, DbBadActor>("SELECT * FROM badactors WHERE user_id = $1;")
-            .bind(user_id.to_string())
-            .fetch_all(db_pool)
-            .await?
+        let db_bad_actors =
+            sqlx::query_as::<_, DbBadActor>("SELECT * FROM bad_actors WHERE user_id = $1;")
+                .bind(user_id.to_string())
+                .fetch_all(db_pool)
+                .await
+                .context(format!(
+                    "Failed to get all rows for user {user_id} from the `bad_actors` table"
+                ))?;
+
+        db_bad_actors
             .into_iter()
             .map(BadActor::try_from)
             .collect::<Result<Vec<BadActor>, _>>()
     }
 
+    /// Get a specific bad actor entry by its unique ID.
     pub async fn get_by_id(db_pool: &PgPool, id: u64) -> anyhow::Result<Option<BadActor>> {
-        sqlx::query_as::<_, DbBadActor>("SELECT * FROM badactors WHERE id = $1;")
-            .bind(id as i64)
-            .fetch_optional(db_pool)
-            .await?
-            .map(BadActor::try_from)
-            .transpose()
+        let db_bad_actor =
+            sqlx::query_as::<_, DbBadActor>("SELECT * FROM bad_actors WHERE id = $1;")
+                .bind(id as i64)
+                .fetch_optional(db_pool)
+                .await
+                .context(format!(
+                    "Failed to get row with ID {id} from the `bad_actors` table"
+                ))?;
+
+        db_bad_actor.map(BadActor::try_from).transpose()
     }
 
+    /// Deactivate a bad actor entry by its unique ID with the given explanation.
+    /// This also updates the `updated_by_user_id` field to the user ID of the user who deactivated the entry.
     pub async fn deavtivate(
         db_pool: &PgPool,
         id: u64,
         explanation: impl Into<String>,
-        last_changed_by: UserId,
+        updated_by_user_id: UserId,
     ) -> anyhow::Result<BadActor> {
-        sqlx::query_as::<_, DbBadActor>(
+        let updated_db_bad_actor = sqlx::query_as::<_, DbBadActor>(
             r#"
             UPDATE bad_actors
             SET
                 is_active = false,
                 explanation = $2,
-                last_changed_by = $3,
+                updated_by_user_id = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -266,25 +312,29 @@ impl BadActorModelController {
         )
         .bind(id as i64)
         .bind(explanation.into())
-        .bind(last_changed_by.to_string())
+        .bind(updated_by_user_id.to_string())
         .fetch_one(db_pool)
-        .await?
-        .try_into()
+        .await
+        .context(format!("Failed to deactivate bad actor entry with ID {id}"))?;
+
+        updated_db_bad_actor.try_into()
     }
 
+    /// Activate a bad actor entry by its unique ID with the given explanation.
+    /// This also updates the `updated_by_user_id` field to the user ID of the user who activated the entry.
     pub async fn activate(
         db_pool: &PgPool,
         id: u64,
         explanation: impl Into<String>,
-        last_changed_by: UserId,
+        updated_by_user_id: UserId,
     ) -> anyhow::Result<BadActor> {
-        sqlx::query_as::<_, DbBadActor>(
+        let updated_db_bad_actor = sqlx::query_as::<_, DbBadActor>(
             r#"
             UPDATE bad_actors
             SET
                 is_active = true,
                 explanation = $2,
-                last_changed_by = $3,
+                updated_by_user_id = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -292,20 +342,21 @@ impl BadActorModelController {
         )
         .bind(id as i64)
         .bind(explanation.into())
-        .bind(last_changed_by.to_string())
+        .bind(updated_by_user_id.to_string())
         .fetch_one(db_pool)
-        .await?
-        .try_into()
+        .await
+        .context(format!("Failed to activate bad actor entry with ID {id}"))?;
+
+        updated_db_bad_actor.try_into()
     }
 
-    pub async fn get(
+    /// Get the most recent bad actor entries with the given limit and query type. Defaults to `BadActorQueryType::All`.
+    pub async fn get_by_type(
         db_pool: &PgPool,
         limit: u8,
         query_type: Option<BadActorQueryType>,
     ) -> anyhow::Result<Vec<BadActor>> {
-        let query_type = query_type.unwrap_or(BadActorQueryType::All);
-
-        let query_str = match query_type {
+        let query_str = match query_type.unwrap_or(BadActorQueryType::All) {
             BadActorQueryType::All => "SELECT * FROM bad_actors ORDER BY created_at DESC LIMIT $1;",
             BadActorQueryType::Active => {
                 "SELECT * FROM bad_actors WHERE is_active = true ORDER BY created_at DESC LIMIT $1"
@@ -315,35 +366,47 @@ impl BadActorModelController {
             }
         };
 
-        sqlx::query_as::<_, DbBadActor>(query_str)
+        let db_bad_actors = sqlx::query_as::<_, DbBadActor>(query_str)
             .bind(limit as i8)
             .fetch_all(db_pool)
-            .await?
+            .await
+            .context("Failed to get most recent entries from the `bad_actors` table")?;
+
+        db_bad_actors
             .into_iter()
             .map(BadActor::try_from)
             .collect::<Result<Vec<BadActor>, _>>()
     }
 
     pub async fn delete(pg_pool: &PgPool, id: u64) -> anyhow::Result<BadActor> {
-        sqlx::query_as::<_, DbBadActor>("DELETE FROM bad_actors WHERE id = $1 RETURNING *;")
-            .bind(id as i64)
-            .fetch_one(pg_pool)
-            .await?
-            .try_into()
+        let deleted_db_bad_actor =
+            sqlx::query_as::<_, DbBadActor>("DELETE FROM bad_actors WHERE id = $1 RETURNING *;")
+                .bind(id as i64)
+                .fetch_one(pg_pool)
+                .await
+                .context(format!(
+                    "Failed to delete entry with ID {id} from the `bad_actors` table."
+                ))?;
+
+        tracing::info!("Deleted bad actor entry with ID {id} from the database.");
+
+        deleted_db_bad_actor.try_into()
     }
 
+    /// Update the screenshot proof of a bad actor entry by its unique ID.
+    /// This also updates the `last_changed_by` field to the user ID of the user who updated the entry.
     pub async fn update_screenshot(
         pg_pool: &PgPool,
         id: u64,
-        updating_user: UserId,
+        updated_by_user_id: UserId,
         screenshot_path: impl Into<String>,
     ) -> anyhow::Result<BadActor> {
-        sqlx::query_as::<_, DbBadActor>(
+        let updated_db_bad_actor = sqlx::query_as::<_, DbBadActor>(
             r#"
             UPDATE bad_actors
             SET
                 screenshot_proof = $2,
-                last_changed_by = $3,
+                updated_by_user_id = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -351,24 +414,28 @@ impl BadActorModelController {
         )
         .bind(id as i64)
         .bind(screenshot_path.into())
-        .bind(updating_user.to_string())
+        .bind(updated_by_user_id.to_string())
         .fetch_one(pg_pool)
-        .await?
-        .try_into()
+        .await
+        .context(format!(
+            "Failed to update screenshot path for bad actor entry with ID {id}"
+        ))?;
+
+        updated_db_bad_actor.try_into()
     }
 
     pub async fn update_explanation(
         pg_pool: &PgPool,
         id: u64,
-        updating_user: UserId,
+        updated_by_user_id: UserId,
         explanation: impl Into<String>,
     ) -> anyhow::Result<BadActor> {
-        sqlx::query_as::<_, DbBadActor>(
+        let updated_db_bad_actor = sqlx::query_as::<_, DbBadActor>(
             r#"
             UPDATE bad_actors
             SET
                 explanation = $2,
-                last_changed_by = $3,
+                updated_by_user_id = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -376,9 +443,13 @@ impl BadActorModelController {
         )
         .bind(id as i64)
         .bind(explanation.into())
-        .bind(updating_user.to_string())
+        .bind(updated_by_user_id.to_string())
         .fetch_one(pg_pool)
-        .await?
-        .try_into()
+        .await
+        .context(format!(
+            "Failed to update explanation for bad actor entry with ID {id}"
+        ))?;
+
+        updated_db_bad_actor.try_into()
     }
 }

@@ -3,18 +3,36 @@ use poise::CreateReply;
 use serenity::{
     Attachment, ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
     CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
-    EditInteractionResponse, User,
+    EditInteractionResponse, PartialGuild, User,
 };
 
-use crate::database::badactor_model_controller::{
+use crate::database::controllers::badactor_model_controller::{
     BadActor, BadActorModelController, BadActorType, CreateBadActorOptions,
 };
-use crate::database::scores_model_controller::ScoresModelController;
-use crate::database::user_model_controller::UserModelController;
+use crate::database::controllers::scores_model_controller::ScoresModelController;
+use crate::database::controllers::user_model_controller::UserModelController;
 use crate::oops;
 use crate::util::random_utils;
 use crate::util::{embeds, format, locks, screenshot};
 use crate::{Context as AppContext, Logger};
+use crate::broadcast::broadcast;
+
+enum ReportOutcome {
+    Success,
+    Fail,
+    Cancel,
+    Confirm,
+}
+
+struct CollectorOptions<'a> {
+    ctx: AppContext<'a>,
+    target_user: &'a User,
+    collector: &'a ComponentInteraction,
+    screenshot: Option<Attachment>,
+    actor_type: BadActorType,
+    explanation: Option<String>,
+    interaction_guild: &'a PartialGuild,
+}
 
 /// Subcommands for server configs.
 #[poise::command(
@@ -72,7 +90,7 @@ pub async fn report(
     };
 
     if let Some(user) = user {
-        if !user.servers.contains(&interaction_guild.id) {
+        if !user.guild_ids.contains(&interaction_guild.id) {
             let user_msg = "You can only use this command in one of your servers!";
             oops!(ctx, user_msg);
         }
@@ -99,105 +117,131 @@ pub async fn report(
     ctx.send(get_check_user_reply(ctx, &target_user)).await?;
 
     if let Some(collector) = get_component_collector(ctx).await {
-        if collector.data.custom_id.as_str() == "cancel" {
-            return respond_cancel(ctx, &target_user, &collector).await;
-        }
+        let options = CollectorOptions {
+            ctx,
+            target_user: &target_user,
+            collector: &collector,
+            screenshot,
+            actor_type,
+            explanation,
+            interaction_guild: &interaction_guild,
+        };
 
-        if collector.data.custom_id.as_str() == "confirm" {
-            respond_confirm(ctx, &target_user, &collector).await?;
-
-            let file_name = match screenshot {
-                Some(s) => {
-                    let Ok(file_name) = save_screenshot(ctx, &collector, s, &target_user).await
-                    else {
-                        return Ok(());
-                    };
-
-                    Some(file_name)
-                }
-                None => None,
-            };
-
-            let options = CreateBadActorOptions {
-                user_id: target_user.id,
-                actor_type,
-                screenshot_proof: file_name,
-                explanation,
-                last_changed_by: ctx.author().id,
-                originally_created_in: interaction_guild.id,
-            };
-
-            let Ok(_) = save_bad_actor(ctx, &target_user, &collector, options).await else {
-                return Ok(());
-            };
-
-            if let Err(e) = ScoresModelController::create_or_increase_scoreboards(
-                &ctx.data().db_pool,
-                ctx.author().id,
-                interaction_guild.id,
-            )
-            .await
-            {
-                let log_msg = format!(
-                    "Failed to updated scores for user {} or guild {}",
-                    format::display(ctx.author()),
-                    format::display(&interaction_guild)
-                );
-                logger.error(ctx, e, log_msg).await;
-            }
-
-            // match broadcast_bad_actor().await {
-            //     Ok(_) => {
-            //         return respond_success(&ctx, &target_user, &collector).await;
-            //     }
-            //     Err(e) => {
-            //         let log_msg = format!(
-            //             "Failed to broadcast the new report for {} to the community.",
-            //             display(&target_user)
-            //         );
-            //         logger.error(&ctx, e, log_msg).await;
-
-            //         return respond_failure(&ctx, &target_user, &collector).await;
-            //     }
-            // }
-        }
+        return handle_collector(options).await;
     }
 
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn deactivate(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn deactivate(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn reactivate(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn reactivate(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn display_latest(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn display_latest(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn display_by_user(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn display_by_user(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn add_screenshot(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn add_screenshot(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn replace_screenshot(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn replace_screenshot(_ctx: AppContext<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn update_explanation(ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn update_explanation(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+    Ok(())
+}
+
+async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
+    let CollectorOptions {
+        ctx,
+        target_user,
+        collector,
+        screenshot,
+        actor_type,
+        explanation,
+        interaction_guild,
+    } = options;
+
+    if collector.data.custom_id.as_str() == "cancel" {
+        return respond_outcome(ctx, target_user, collector, ReportOutcome::Cancel).await;
+    }
+
+    if collector.data.custom_id.as_str() == "confirm" {
+        respond_outcome(ctx, target_user, collector, ReportOutcome::Confirm).await?;
+
+        let maybe_file_name = if let Some(screenshot) = screenshot {
+            Some(save_screenshot(ctx, collector, screenshot, target_user).await?)
+        } else {
+            None
+        };
+
+        let options = CreateBadActorOptions {
+            user_id: target_user.id,
+            actor_type,
+            screenshot_proof: maybe_file_name,
+            explanation,
+            updated_by_user_id: ctx.author().id,
+            origin_guild_id: interaction_guild.id,
+        };
+
+        let bad_actor = save_bad_actor(ctx, target_user, collector, options).await?;
+
+        if let Err(e) = ScoresModelController::create_or_increase_scoreboards(
+            &ctx.data().db_pool,
+            ctx.author().id,
+            interaction_guild.id,
+        )
+        .await
+        {
+            let log_msg = format!(
+                "Failed to updated scores for user {} or guild {}",
+                format::display(ctx.author()),
+                format::display(interaction_guild)
+            );
+            Logger::get().error(ctx, e, log_msg).await;
+        }
+
+        let broadcast_options = broadcast::BroadcastOptions {
+            ctx,
+            target_user,
+            bad_actor: &bad_actor,
+            interaction_guild,
+            broadcast_type: broadcast::BroadcastType::Report,
+        };
+
+        match broadcast::broadcast(broadcast_options).await {
+            Ok(_) => {
+                return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
+            }
+            Err(e) => {
+                let log_msg = format!(
+                    "Failed to broadcast the new report for {} to the community.",
+                    format::display(target_user)
+                );
+                Logger::get().error(ctx, e, log_msg).await;
+
+                return respond_outcome(ctx, target_user, collector, ReportOutcome::Fail).await;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -237,12 +281,31 @@ async fn get_component_collector(ctx: AppContext<'_>) -> Option<ComponentInterac
         })
 }
 
-async fn update_component_response(
+async fn respond_outcome(
     ctx: AppContext<'_>,
     target_user: &User,
     collector: &ComponentInteraction,
-    message: String,
+    outcome: ReportOutcome,
 ) -> anyhow::Result<()> {
+    let message = match outcome {
+        ReportOutcome::Cancel => format!(
+            "Cancelled reporting user {}!",
+            format::fdisplay(target_user)
+        ),
+        ReportOutcome::Confirm => format!(
+            "Reporting user {} to the community and taking action...",
+            format::fdisplay(target_user)
+        ),
+        ReportOutcome::Success => format!(
+            "Successfully reported {} to the community!",
+            format::fdisplay(target_user)
+        ),
+        ReportOutcome::Fail => format!(
+            "Failed to report {} to the community!",
+            format::fdisplay(target_user)
+        ),
+    };
+
     let response = CreateInteractionResponse::UpdateMessage(
         CreateInteractionResponseMessage::new()
             .content(message)
@@ -250,55 +313,8 @@ async fn update_component_response(
     );
 
     collector.create_response(&ctx, response).await?;
+
     Ok(())
-}
-
-async fn respond_cancel(
-    ctx: AppContext<'_>,
-    target_user: &User,
-    collector: &ComponentInteraction,
-) -> anyhow::Result<()> {
-    let message = format!(
-        "Cancelled reporting user {}!",
-        format::fdisplay(target_user)
-    );
-    update_component_response(ctx, target_user, collector, message).await
-}
-
-async fn respond_confirm(
-    ctx: AppContext<'_>,
-    target_user: &User,
-    collector: &ComponentInteraction,
-) -> anyhow::Result<()> {
-    let message = format!(
-        "Reporting user {} to the community and taking action...",
-        format::fdisplay(target_user)
-    );
-    update_component_response(ctx, target_user, collector, message).await
-}
-
-async fn respond_success(
-    ctx: AppContext<'_>,
-    target_user: &User,
-    collector: &ComponentInteraction,
-) -> anyhow::Result<()> {
-    let message = format!(
-        "Successfully reported {} to the community!",
-        format::fdisplay(target_user)
-    );
-    update_component_response(ctx, target_user, collector, message).await
-}
-
-async fn respond_failure(
-    ctx: AppContext<'_>,
-    target_user: &User,
-    collector: &ComponentInteraction,
-) -> anyhow::Result<()> {
-    let message = format!(
-        "Failed to report {} to the community!",
-        format::fdisplay(target_user)
-    );
-    update_component_response(ctx, target_user, collector, message).await
 }
 
 async fn save_screenshot(
@@ -307,24 +323,30 @@ async fn save_screenshot(
     screenshot: Attachment,
     target_user: &User,
 ) -> anyhow::Result<String> {
-    match screenshot::FileManager::save(screenshot, target_user.id).await {
-        Ok(saved) => Ok(saved),
+    let save_result = screenshot::FileManager::save(screenshot, target_user.id).await;
+
+    match save_result {
+        Ok(saved) => {
+            tracing::info!("Screenshot {saved} saved.");
+            Ok(saved)
+        }
         Err(e) => {
             let log_msg = format!(
                 "Failed to save screenshot for {}",
                 format::display(target_user)
             );
-            Logger::get().error(ctx, e, &log_msg).await;
+            Logger::get().error(ctx, &e, &log_msg).await;
 
             let user_msg = format!(
                 "Failed to save screenshot for {}!",
                 format::fdisplay(target_user)
             );
+
             collector
                 .edit_response(&ctx, EditInteractionResponse::default().content(user_msg))
                 .await?;
 
-            anyhow::bail!(log_msg);
+            Err(e)
         }
     }
 }
@@ -342,7 +364,7 @@ async fn save_bad_actor(
                 "Failed to add bad actor {} to the dabase",
                 format::display(target_user)
             );
-            Logger::get().error(ctx, e, &log_msg).await;
+            Logger::get().error(ctx, &e, &log_msg).await;
 
             let user_msg = format!(
                 "Failed to add bad actor {} to the dabase!",
@@ -352,7 +374,7 @@ async fn save_bad_actor(
                 .edit_response(&ctx, EditInteractionResponse::default().content(user_msg))
                 .await?;
 
-            anyhow::bail!(log_msg);
+            Err(e)
         }
     }
 }

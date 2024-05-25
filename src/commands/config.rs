@@ -2,7 +2,7 @@ use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{ChannelType, GuildChannel, Role};
 
-use crate::database::serverconfig_model_controller::{
+use crate::database::controllers::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
 use crate::util::random_utils;
@@ -58,8 +58,6 @@ async fn update(
     impersonation_action_level: Option<ActionLevel>,
     #[description = "The level of action to take for users with bigot behaviour."]
     bigotry_action_level: Option<ActionLevel>,
-    #[description = "Whether or not to timeout users with a specific role."]
-    timeout_users_with_role: Option<bool>,
     #[description = "Role IDs to ignore when taking action. Separate multiple with a comma (,)."]
     ignored_roles: Option<String>,
 ) -> anyhow::Result<()> {
@@ -82,17 +80,16 @@ async fn update(
         None
     };
 
-    let log_channel = log_channel.map(|c| c.id);
+    let log_channel_id = log_channel.map(|c| c.id);
     let ping_role = ping_role.map(|r| r.id);
 
     let update_values = UpdateServerConfig {
-        log_channel,
+        log_channel_id,
         ping_users,
         ping_role,
         spam_action_level,
         impersonation_action_level,
         bigotry_action_level,
-        timeout_users_with_role,
         ignored_roles,
     };
 

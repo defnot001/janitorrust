@@ -7,8 +7,9 @@ use serenity::{CacheHttp, CreateEmbed, GuildId, PartialGuild, RoleId, User, User
 
 use crate::Context as AppContext;
 
-pub fn parse_snowflake(snowflake: impl Into<String>) -> anyhow::Result<std::num::NonZeroU64> {
-    NonZeroU64::from_str(snowflake.into().as_str()).map_err(anyhow::Error::new)
+pub fn parse_snowflake(snowflake: impl AsRef<str>) -> anyhow::Result<std::num::NonZeroU64> {
+    let context = format!("Failed to parse snowflake `{}`", snowflake.as_ref());
+    NonZeroU64::from_str(snowflake.as_ref()).map_err(|e| anyhow::Error::from(e).context(context))
 }
 
 pub async fn get_bot_user(ctx: AppContext<'_>) -> Option<User> {

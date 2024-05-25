@@ -1,39 +1,46 @@
 use poise::FrameworkError;
 
-use crate::Data;
+use crate::{util::logger::Logger, Data};
 
 #[allow(clippy::needless_lifetimes)]
 pub async fn error_handler<'a>(
     error: FrameworkError<'a, Data, anyhow::Error>,
 ) -> anyhow::Result<()> {
+    let logger = Logger::get();
+
     match error {
         FrameworkError::Command { error, ctx, .. } => {
-            tracing::error!("Command error: {:?}", error);
+            let error_msg = format!("Command error /{}", ctx.command().name);
+            logger.error(ctx, error, error_msg).await;
 
-            match ctx
-                .reply("There was an error trying to execute that command.")
+            if let Err(e) = ctx
+                .say("There was an error trying to execute that command.")
                 .await
             {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    tracing::error!("Failed to send error message: {:?}", e);
-                    Ok(())
-                }
+                logger.error(ctx, e, "Failed to send error message").await;
             }
+
+            Ok(())
         }
         FrameworkError::CommandPanic { payload, ctx, .. } => {
-            tracing::error!("Command panic: {:?}", payload);
+            let error_msg = format!("Command panic /{}: ", ctx.command().name);
 
-            match ctx
-                .reply("Oops, something went terribly wrong. Please try again later.")
+            if let Some(payload) = payload {
+                let error = anyhow::Error::msg(error_msg).context(payload);
+                logger.error(ctx, error, "Panic").await;
+            } else {
+                let error = anyhow::Error::msg(error_msg);
+                logger.error(ctx, error, "Panic").await;
+            }
+
+            if let Err(e) = ctx
+                .say("There was an error trying to execute that command.")
                 .await
             {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    tracing::error!("Failed to send error message: {:?}", e);
-                    Ok(())
-                }
+                logger.error(ctx, e, "Failed to send error message").await;
             }
+
+            Ok(())
         }
         FrameworkError::GuildOnly { ctx, .. } => {
             tracing::error!(

@@ -56,7 +56,7 @@ impl Logger {
         let msg = sanitize_msg(log_msg.as_ref());
         tracing::error!("{msg}: {e}");
 
-        let embed = Self::log_embed(msg, ctx, LogLevel::Warn, Some(e)).await;
+        let embed = Self::log_embed(msg, ctx, LogLevel::Error, Some(e)).await;
 
         if let Err(e) = self
             .channel_id
