@@ -36,7 +36,7 @@ macro_rules! assert_admin_server {
 #[macro_export]
 macro_rules! assert_user {
     ($ctx:ident) => {
-        let Some(_) = $ctx.guild_id() else {
+        if $ctx.guild_id().is_none() {
             $ctx.say("This command can only be used in a server.")
                 .await?;
             return Ok(());
