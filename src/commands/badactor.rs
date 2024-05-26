@@ -1,3 +1,4 @@
+use futures::future;
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{
@@ -6,16 +7,15 @@ use serenity::{
     EditInteractionResponse, PartialGuild, User,
 };
 
+use crate::assert_user_server;
+use crate::broadcast::broadcast;
 use crate::database::controllers::badactor_model_controller::{
-    BadActor, BadActorModelController, BadActorType, CreateBadActorOptions,
+    BadActor, BadActorModelController, BadActorQueryType, BadActorType, CreateBadActorOptions,
 };
 use crate::database::controllers::scores_model_controller::ScoresModelController;
-use crate::database::controllers::user_model_controller::UserModelController;
-use crate::oops;
 use crate::util::random_utils;
 use crate::util::{embeds, format, locks, screenshot};
 use crate::{Context as AppContext, Logger};
-use crate::broadcast::broadcast;
 
 enum ReportOutcome {
     Success,
@@ -41,7 +41,6 @@ struct CollectorOptions<'a> {
     subcommands(
         "report",
         "deactivate",
-        "reactivate",
         "display_latest",
         "display_by_user",
         "add_screenshot",
@@ -58,7 +57,7 @@ pub async fn badactor(_: AppContext<'_>) -> anyhow::Result<()> {
 #[poise::command(slash_command, guild_only = true)]
 pub async fn report(
     ctx: AppContext<'_>,
-    #[description = "The user to report. You can also paste their id here."] target_user: User,
+    #[description = "The user to report. You can also paste their ID here."] target_user: User,
     #[description = "The type of bad act the user did."] actor_type: BadActorType,
     #[description = "A screenshot of the bad act. You can upload a file here."] screenshot: Option<
         Attachment,
@@ -66,52 +65,31 @@ pub async fn report(
     #[description = "If you can't provide a screenshot, please explain what happened here."]
     explanation: Option<String>,
 ) -> anyhow::Result<()> {
-    let logger = Logger::get();
-
-    let Some(interaction_guild) = ctx.partial_guild().await else {
-        let user_msg = "This command can only be used in a server!";
-        oops!(ctx, user_msg);
-    };
-
     ctx.defer().await?;
 
-    let user = match UserModelController::get(&ctx.data().db_pool, ctx.author().id).await {
-        Ok(user) => user,
-        Err(e) => {
-            let log_msg = format!(
-                "Failed to get interaction user {} from the database",
-                format::display(ctx.author())
-            );
-            logger.error(ctx, e, log_msg).await;
-
-            let user_msg = "You do not have permission to use this command!";
-            oops!(ctx, user_msg);
-        }
+    let Some(interaction_guild) = ctx.partial_guild().await else {
+        ctx.say("This command can only be used in a server!")
+            .await?;
+        return Ok(());
     };
 
-    if let Some(user) = user {
-        if !user.guild_ids.contains(&interaction_guild.id) {
-            let user_msg = "You can only use this command in one of your servers!";
-            oops!(ctx, user_msg);
-        }
-    } else {
-        let user_msg = "You do not have permission to use this command!";
-        oops!(ctx, user_msg);
-    }
+    assert_user_server!(ctx);
 
     if screenshot.is_none() && explanation.is_none() {
-        let user_msg = "You have to provide either a screenshot or an explanation.";
-        oops!(ctx, user_msg);
+        ctx.say("You have to provide either a screenshot or an explanation.")
+            .await?;
+        return Ok(());
     }
 
     let _guard = locks::lock_user_id(target_user.id).await;
 
     if BadActorModelController::has_active_case(&ctx.data().db_pool, target_user.id).await {
-        let user_msg = format!(
+        ctx.say(format!(
             "User {} already has an active case!",
             format::fdisplay(&target_user)
-        );
-        oops!(ctx, user_msg);
+        ))
+        .await?;
+        return Ok(());
     }
 
     ctx.send(get_check_user_reply(ctx, &target_user)).await?;
@@ -134,37 +112,350 @@ pub async fn report(
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn deactivate(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn deactivate(
+    ctx: AppContext<'_>,
+    #[description = "The ID of the report that you want to deactivate."] report_id: u64,
+    #[description = "Reason for deactivating the report"] explanation: String,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+
+    let Some(interaction_guild) = ctx.partial_guild().await else {
+        ctx.say("This command can only be used in a server!")
+            .await?;
+        return Ok(());
+    };
+
+    assert_user_server!(ctx);
+
+    let old_entry = BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?;
+
+    if let Some(entry) = old_entry {
+        if !entry.is_active {
+            ctx.say("This entry is not active!").await?;
+            return Ok(());
+        }
+    } else {
+        ctx.say("There is no such entry in the database!").await?;
+        return Ok(());
+    }
+
+    let deactivated = BadActorModelController::deavtivate(
+        &ctx.data().db_pool,
+        report_id,
+        explanation,
+        ctx.author().id,
+    )
+    .await?;
+
+    let target_user = deactivated.user(ctx).await;
+
+    if target_user.is_none() {
+        let log_msg = format!(
+            "User with ID {} does not exist anymore, skipping broadcast",
+            deactivated.user_id
+        );
+        Logger::get().warn(ctx, log_msg).await;
+
+        ctx.say("This user's account no longer exists, deactivating it does not have any impact.")
+            .await?;
+        return Ok(());
+    }
+
+    let broadcast_options = broadcast::BroadcastOptions {
+        ctx,
+        target_user: &target_user.unwrap(),
+        bad_actor: &deactivated,
+        interaction_guild: &interaction_guild,
+        broadcast_type: broadcast::BroadcastType::Deactivate,
+    };
+
+    broadcast::broadcast(broadcast_options).await;
+
+    ctx.say(format!("Successfully disabled report entry {report_id}."))
+        .await?;
+
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn reactivate(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn display_latest(
+    ctx: AppContext<'_>,
+    #[description = "The amount of entries you want to display. Max 10. Defaults to 5."]
+    limit: Option<u8>,
+    #[description = "The type of reports you want to display. Defaults to all report types."]
+    report_type: Option<BadActorQueryType>,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_user_server!(ctx);
+
+    let mut limit = limit.unwrap_or(5);
+
+    if limit > 10 {
+        limit = 10;
+    }
+
+    let latest =
+        BadActorModelController::get_by_type(&ctx.data().db_pool, limit, report_type).await?;
+
+    let reply = construct_embeds_message(ctx, latest).await;
+    ctx.send(reply).await?;
+
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn display_latest(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn display_by_user(
+    ctx: AppContext<'_>,
+    #[description = "The user to display the reports from. You can also paste their ID here."]
+    target_user: User,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_user_server!(ctx);
+
+    let entries =
+        BadActorModelController::get_by_user_id(&ctx.data().db_pool, target_user.id).await?;
+
+    if entries.is_empty() {
+        ctx.say(format!(
+            "User {} does not have any entries.",
+            format::fdisplay(&target_user)
+        ))
+        .await?;
+        return Ok(());
+    }
+
+    let reply = construct_embeds_message(ctx, entries).await;
+    ctx.send(reply).await?;
+
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn display_by_user(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn add_screenshot(
+    ctx: AppContext<'_>,
+    #[description = "The report ID you want to add the screenshot to."] report_id: u64,
+    #[description = "The screenshot you want to add. You can upload a file here."]
+    screenshot: Attachment,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+
+    let Some(interaction_guild) = ctx.partial_guild().await else {
+        ctx.say("This command can only be used in a server!")
+            .await?;
+        return Ok(());
+    };
+
+    assert_user_server!(ctx);
+
+    let old_entry = match BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?
+    {
+        Some(old) => {
+            if old.screenshot_proof.is_some() {
+                ctx.say("This report ID already has a screenshot proof. Please use `/badactor replace_screenshot` if you want to overwrite it.").await?;
+                return Ok(());
+            }
+
+            old
+        }
+        None => {
+            ctx.say("There is no entry with this report ID!").await?;
+            return Ok(());
+        }
+    };
+
+    let screenshot_path = match screenshot::FileManager::save(screenshot, old_entry.user_id).await {
+        Ok(path) => path,
+        Err(e) => {
+            let log_msg = "Failed to save screenshot";
+            Logger::get().error(ctx, e, log_msg).await;
+
+            ctx.say("Failed to save screenshot!").await?;
+            return Ok(());
+        }
+    };
+
+    let updated = BadActorModelController::update_screenshot(
+        &ctx.data().db_pool,
+        report_id,
+        ctx.author().id,
+        screenshot_path,
+    )
+    .await?;
+
+    let target_user = updated.user(ctx).await;
+
+    if target_user.is_none() {
+        let log_msg = format!(
+            "User with ID {} does not exist anymore, skipping broadcast",
+            updated.user_id
+        );
+        Logger::get().warn(ctx, log_msg).await;
+
+        ctx.say("This user's account no longer exists. The screenshot was updated in the database but broadcasting will be skipped.")
+            .await?;
+        return Ok(());
+    }
+
+    let broadcast_options = broadcast::BroadcastOptions {
+        ctx,
+        target_user: &target_user.unwrap(),
+        bad_actor: &updated,
+        interaction_guild: &interaction_guild,
+        broadcast_type: broadcast::BroadcastType::AddScreenshot,
+    };
+
+    broadcast::broadcast(broadcast_options).await;
+
+    ctx.say(format!(
+        "Successfully updated screenshot for report entry {report_id}."
+    ))
+    .await?;
+
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn add_screenshot(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+pub async fn replace_screenshot(
+    ctx: AppContext<'_>,
+    #[description = "The report ID you want to replace the screenshot of."] report_id: u64,
+    #[description = "The screenshot you want replace the old one with. You can upload a file here."]
+    screenshot: Attachment,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+
+    let Some(interaction_guild) = ctx.partial_guild().await else {
+        ctx.say("This command can only be used in a server!")
+            .await?;
+        return Ok(());
+    };
+
+    assert_user_server!(ctx);
+
+    let old_entry = match BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?
+    {
+        Some(old) => {
+            if old.screenshot_proof.is_none() {
+                ctx.say("This report ID does not have a screenshot proof yet. Please use `/badactor add_screenshot` if you want to provide one for it.").await?;
+                return Ok(());
+            }
+
+            old
+        }
+        None => {
+            ctx.say("There is no entry with this report ID!").await?;
+            return Ok(());
+        }
+    };
+
+    let old_path = old_entry.screenshot_proof.unwrap();
+
+    let new_path = match screenshot::FileManager::save(screenshot, old_entry.user_id).await {
+        Ok(path) => path,
+        Err(e) => {
+            let log_msg = "Failed to save screenshot";
+            Logger::get().error(ctx, e, log_msg).await;
+
+            ctx.say("Failed to save screenshot!").await?;
+            return Ok(());
+        }
+    };
+
+    screenshot::FileManager::delete(&old_path).await?;
+
+    let updated = BadActorModelController::update_screenshot(
+        &ctx.data().db_pool,
+        report_id,
+        ctx.author().id,
+        new_path,
+    )
+    .await?;
+
+    let target_user = updated.user(ctx).await;
+
+    if target_user.is_none() {
+        let log_msg = format!(
+            "User with ID {} does not exist anymore, skipping broadcast",
+            updated.user_id
+        );
+        Logger::get().warn(ctx, log_msg).await;
+
+        ctx.say("This user's account no longer exists. The screenshot was updated in the database but broadcasting will be skipped.")
+            .await?;
+        return Ok(());
+    }
+
+    let broadcast_options = broadcast::BroadcastOptions {
+        ctx,
+        target_user: &target_user.unwrap(),
+        bad_actor: &updated,
+        interaction_guild: &interaction_guild,
+        broadcast_type: broadcast::BroadcastType::ReplaceScreenshot,
+    };
+
+    broadcast::broadcast(broadcast_options).await;
+
+    ctx.say(format!(
+        "Successfully updated screenshot for report entry {report_id}."
+    ))
+    .await?;
+
     Ok(())
 }
 
 #[poise::command(slash_command, guild_only = true)]
-pub async fn replace_screenshot(_ctx: AppContext<'_>) -> anyhow::Result<()> {
-    Ok(())
-}
+pub async fn update_explanation(
+    ctx: AppContext<'_>,
+    #[description = "The report ID you want to replace the screenshot of."] report_id: u64,
+    #[description = "The updated explanation you want to provide for the report."]
+    explanation: String,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
 
-#[poise::command(slash_command, guild_only = true)]
-pub async fn update_explanation(_ctx: AppContext<'_>) -> anyhow::Result<()> {
+    let Some(interaction_guild) = ctx.partial_guild().await else {
+        ctx.say("This command can only be used in a server!")
+            .await?;
+        return Ok(());
+    };
+
+    assert_user_server!(ctx);
+
+    let updated = BadActorModelController::update_explanation(
+        &ctx.data().db_pool,
+        report_id,
+        ctx.author().id,
+        explanation,
+    )
+    .await?;
+
+    let target_user = updated.user(ctx).await;
+
+    if target_user.is_none() {
+        let log_msg = format!(
+            "User with ID {} does not exist anymore, skipping broadcast",
+            updated.user_id
+        );
+        Logger::get().warn(ctx, log_msg).await;
+
+        ctx.say("This user's account no longer exists. The explanation was updated in the database but broadcasting will be skipped.")
+            .await?;
+        return Ok(());
+    }
+
+    let broadcast_options = broadcast::BroadcastOptions {
+        ctx,
+        target_user: &target_user.unwrap(),
+        bad_actor: &updated,
+        interaction_guild: &interaction_guild,
+        broadcast_type: broadcast::BroadcastType::UpdateExplanation,
+    };
+
+    broadcast::broadcast(broadcast_options).await;
+
+    ctx.say(format!(
+        "Successfully updated explanation for report entry {report_id}."
+    ))
+    .await?;
+
     Ok(())
 }
 
@@ -226,20 +517,8 @@ async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
             broadcast_type: broadcast::BroadcastType::Report,
         };
 
-        match broadcast::broadcast(broadcast_options).await {
-            Ok(_) => {
-                return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
-            }
-            Err(e) => {
-                let log_msg = format!(
-                    "Failed to broadcast the new report for {} to the community.",
-                    format::display(target_user)
-                );
-                Logger::get().error(ctx, e, log_msg).await;
-
-                return respond_outcome(ctx, target_user, collector, ReportOutcome::Fail).await;
-            }
-        }
+        broadcast::broadcast(broadcast_options).await;
+        return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
     }
 
     Ok(())
@@ -376,5 +655,56 @@ async fn save_bad_actor(
 
             Err(e)
         }
+    }
+}
+
+/// Returns the [CreateReply] built from the vector of [BadActor]s.
+/// This checks for empty vectors or more than 10 embeds and returns error messages if those conditions are violated.
+async fn construct_embeds_message(ctx: AppContext<'_>, bad_actors: Vec<BadActor>) -> CreateReply {
+    if bad_actors.is_empty() {
+        return CreateReply::default().content("There are no bad actor entries to display!");
+    }
+
+    if bad_actors.len() > 10 {
+        return CreateReply::default().content("Only 10 entries can be displayed at one time!");
+    }
+
+    let iter = bad_actors.into_iter().map(|b| async move {
+        let guild_id = b.origin_guild_id;
+        let guild = guild_id.to_partial_guild(ctx).await.ok();
+        let target_user = b.user(ctx).await;
+
+        if let Some(u) = target_user {
+            let embed = b
+                .to_broadcast_embed(ctx, guild_id, guild.as_ref(), &u)
+                .await;
+
+            Some(embed)
+        } else {
+            None
+        }
+    });
+
+    let joined = future::join_all(iter)
+        .await
+        .into_iter()
+        .filter_map(|embed| embed)
+        .collect::<Vec<_>>();
+
+    let mut embeds = Vec::with_capacity(joined.len());
+    let mut attachments = Vec::with_capacity(joined.len());
+
+    for (embed, attachment) in joined {
+        embeds.push(embed);
+
+        if let Some(a) = attachment {
+            attachments.push(a);
+        }
+    }
+
+    CreateReply {
+        embeds,
+        attachments,
+        ..Default::default()
     }
 }

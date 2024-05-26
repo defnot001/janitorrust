@@ -54,7 +54,7 @@ struct BroadcastToListenersOptions<'a> {
     attachment: Option<CreateAttachment>,
 }
 
-pub async fn broadcast<'a>(options: BroadcastOptions<'a>) -> anyhow::Result<()> {
+pub async fn broadcast<'a>(options: BroadcastOptions<'a>) {
     let BroadcastOptions {
         bad_actor,
         broadcast_type,
@@ -63,10 +63,22 @@ pub async fn broadcast<'a>(options: BroadcastOptions<'a>) -> anyhow::Result<()> 
         target_user,
     } = options;
 
-    let listeners = listener::get_valid_listeners(ctx).await?;
+    let listeners = match listener::get_valid_listeners(ctx).await {
+        Ok(listeners) => listeners,
+        Err(e) => {
+            let log_msg = "Failed to get valid listeners from the database";
+            Logger::get().error(ctx, e, log_msg).await;
+            return;
+        }
+    };
 
     let (embed, attachment) = bad_actor
-        .to_broadcast_embed(ctx, interaction_guild, target_user)
+        .to_broadcast_embed(
+            ctx,
+            interaction_guild.id,
+            Some(interaction_guild),
+            target_user,
+        )
         .await;
 
     let admin_options = admin::BroadcastAdminServerOptions {
@@ -102,8 +114,6 @@ pub async fn broadcast<'a>(options: BroadcastOptions<'a>) -> anyhow::Result<()> 
     };
 
     broadcast_to_listeners(listener_options).await;
-
-    Ok(())
 }
 
 async fn broadcast_to_listeners<'a>(options: BroadcastToListenersOptions<'a>) {
