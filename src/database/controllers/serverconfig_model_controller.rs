@@ -371,17 +371,6 @@ impl ServerConfigModelController {
         db_config.try_into()
     }
 
-    pub async fn delete(pg_pool: &PgPool, guild_id: GuildId) -> anyhow::Result<ServerConfig> {
-        let server_config = sqlx::query_as::<_, DbServerConfig>(
-            "DELETE FROM server_configs WHERE guild_id = $1 RETURNING *;",
-        )
-        .bind(guild_id.to_string())
-        .fetch_one(pg_pool)
-        .await?;
-
-        ServerConfig::try_from(server_config)
-    }
-
     pub async fn delete_if_needed(pg_pool: &PgPool, guild_id: GuildId) -> anyhow::Result<bool> {
         let sql = r#"
             WITH user_check AS (

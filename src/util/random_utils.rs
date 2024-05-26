@@ -3,7 +3,7 @@ use std::{num::NonZeroU64, str::FromStr};
 use anyhow::Context;
 use futures::future;
 use poise::serenity_prelude as serenity;
-use serenity::{CacheHttp, CreateEmbed, GuildId, PartialGuild, RoleId, User, UserId};
+use serenity::{CacheHttp, GuildId, PartialGuild, RoleId, User, UserId};
 
 use crate::Context as AppContext;
 
@@ -102,13 +102,5 @@ mod tests {
         let parsed = parse_snowflake("0");
 
         assert!(parsed.is_err());
-    }
-}
-
-pub fn maybe_set_guild_thumbnail(embed: CreateEmbed, guild: &PartialGuild) -> CreateEmbed {
-    if let Some(url) = guild.icon_url() {
-        embed.thumbnail(url)
-    } else {
-        embed
     }
 }

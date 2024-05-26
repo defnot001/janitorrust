@@ -191,21 +191,6 @@ impl UserModelController {
             .try_into()
     }
 
-    pub async fn get_all(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<JanitorUser>> {
-        let db_users = sqlx::query_as::<_, DbUser>("SELECT * FROM users LIMIT $1;")
-            .bind(limit as i16)
-            .fetch_all(db_pool)
-            .await
-            .context(format!(
-                "Failed to get {limit} users from the `users` table"
-            ))?;
-
-        db_users
-            .into_iter()
-            .map(JanitorUser::try_from)
-            .collect::<anyhow::Result<Vec<_>>>()
-    }
-
     pub async fn get_by_guild(
         db_pool: &PgPool,
         guild_id: GuildId,

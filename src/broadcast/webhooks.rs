@@ -12,7 +12,7 @@ use crate::util::format;
 use crate::util::logger::Logger;
 use crate::Context as AppContext;
 
-use super::broadcast::BroadcastType;
+use super::broadcast_handler::BroadcastType;
 
 #[derive(Debug, FromRow)]
 struct DbBroadcastWebhook {
@@ -64,7 +64,7 @@ pub struct BroadcastWebhookOptions<'a> {
     pub attachment: &'a Option<CreateAttachment>,
 }
 
-pub async fn broadcast_to_webhooks<'a>(options: BroadcastWebhookOptions<'a>) {
+pub async fn broadcast_to_webhooks(options: BroadcastWebhookOptions<'_>) {
     let BroadcastWebhookOptions {
         ctx,
         broadcast_type,
@@ -131,13 +131,11 @@ async fn get_discord_webhooks(
             .await
             .map_err(anyhow::Error::from);
 
-        let listener = WebhookListenerResult {
+        WebhookListenerResult {
             guild_id: w.guild_id,
             guild_name: w.guild_name,
             webhook,
-        };
-
-        listener
+        }
     });
 
     let results = future::join_all(iter).await;

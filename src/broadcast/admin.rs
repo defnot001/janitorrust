@@ -2,10 +2,10 @@ use anyhow::Context;
 use poise::serenity_prelude as serenity;
 use serenity::{CreateAttachment, CreateEmbed};
 
-use crate::broadcast::broadcast::BroadcastType;
+use crate::broadcast::broadcast_handler::BroadcastType;
 use crate::Context as AppContext;
 
-use super::broadcast::get_broadcast_message;
+use super::broadcast_handler::get_broadcast_message;
 
 pub struct BroadcastAdminServerOptions<'a> {
     pub ctx: AppContext<'a>,
@@ -14,8 +14,8 @@ pub struct BroadcastAdminServerOptions<'a> {
     pub broadcast_type: BroadcastType,
 }
 
-pub async fn broadcast_admin_server<'a>(
-    options: BroadcastAdminServerOptions<'a>,
+pub async fn broadcast_admin_server(
+    options: BroadcastAdminServerOptions<'_>,
 ) -> anyhow::Result<()> {
     let BroadcastAdminServerOptions {
         attachment,

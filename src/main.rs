@@ -1,10 +1,10 @@
 // #![allow(dead_code, unused_variables)]
 #![warn(clippy::needless_borrow)]
 
+mod broadcast;
 mod commands;
 mod database;
 mod util;
-mod broadcast;
 
 use commands::{adminconfig, adminlist, badactor, config, scores, user};
 use poise::serenity_prelude as serenity;

@@ -66,7 +66,7 @@ fn get_sql_statements(file_path: PathBuf) -> Vec<String> {
     let file_name = file_path.file_name().unwrap().to_str().unwrap();
 
     let content = std::fs::read_to_string(&file_path)
-        .expect(format!("Failed to read sql file: `{}`", file_name).as_str());
+        .unwrap_or_else(|_| panic!("Failed to read sql file: `{}`", file_name));
 
     content
         .split("\n\n")

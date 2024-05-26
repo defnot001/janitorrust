@@ -16,7 +16,6 @@ use super::{admin, listener, moderate, send, webhooks};
 pub enum BroadcastType {
     Report,
     Deactivate,
-    Reactivate,
     AddScreenshot,
     ReplaceScreenshot,
     UpdateExplanation,
@@ -27,7 +26,6 @@ impl BroadcastType {
         match self {
             Self::Report => "A bad actor has been reported.",
             Self::Deactivate => "A bad actor has been deactivated.",
-            Self::Reactivate => "A bad actor has been reactivated.",
             Self::AddScreenshot => "A screenshot proof has been added to a bad actor entry.",
             Self::UpdateExplanation => "The explanation for a bad actor has been updated.",
             Self::ReplaceScreenshot => "A screenshot has been replaced for a bad actor.",
@@ -54,7 +52,7 @@ struct BroadcastToListenersOptions<'a> {
     attachment: Option<CreateAttachment>,
 }
 
-pub async fn broadcast<'a>(options: BroadcastOptions<'a>) {
+pub async fn broadcast(options: BroadcastOptions<'_>) {
     let BroadcastOptions {
         bad_actor,
         broadcast_type,
@@ -93,14 +91,12 @@ pub async fn broadcast<'a>(options: BroadcastOptions<'a>) {
         Logger::get().error(ctx, e, log_msg).await;
     }
 
-    if broadcast_type == BroadcastType::Report {
-        if notify_user(ctx, target_user).await.is_err() {
-            let log_msg = format!(
-                "Failed to inform {} about the moderation actions in DM",
-                format::display(target_user)
-            );
-            Logger::get().warn(ctx, log_msg).await;
-        }
+    if broadcast_type == BroadcastType::Report && notify_user(ctx, target_user).await.is_err() {
+        let log_msg = format!(
+            "Failed to inform {} about the moderation actions in DM",
+            format::display(target_user)
+        );
+        Logger::get().warn(ctx, log_msg).await;
     }
 
     let listener_options = BroadcastToListenersOptions {
@@ -116,7 +112,7 @@ pub async fn broadcast<'a>(options: BroadcastOptions<'a>) {
     broadcast_to_listeners(listener_options).await;
 }
 
-async fn broadcast_to_listeners<'a>(options: BroadcastToListenersOptions<'a>) {
+async fn broadcast_to_listeners(options: BroadcastToListenersOptions<'_>) {
     let BroadcastToListenersOptions {
         ctx,
         broadcast_type,

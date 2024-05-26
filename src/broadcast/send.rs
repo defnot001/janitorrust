@@ -7,19 +7,19 @@ use crate::format;
 use crate::util::logger::Logger;
 use crate::Context as AppContext;
 
-use super::broadcast::{self, get_broadcast_message};
+use super::broadcast_handler::{self, get_broadcast_message};
 use super::listener::BroadcastListener;
 
 pub struct SendBroadcastMessageOptions<'a> {
     pub ctx: AppContext<'a>,
-    pub broadcast_type: broadcast::BroadcastType,
+    pub broadcast_type: broadcast_handler::BroadcastType,
     pub listener: &'a BroadcastListener,
     pub bad_actor: &'a BadActor,
     pub embed: &'a CreateEmbed,
     pub attachment: &'a Option<CreateAttachment>,
 }
 
-pub async fn send_broadcast_message<'a>(options: SendBroadcastMessageOptions<'a>) {
+pub async fn send_broadcast_message(options: SendBroadcastMessageOptions<'_>) {
     let SendBroadcastMessageOptions {
         ctx,
         broadcast_type,

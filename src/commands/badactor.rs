@@ -8,7 +8,7 @@ use serenity::{
 };
 
 use crate::assert_user_server;
-use crate::broadcast::broadcast;
+use crate::broadcast::broadcast_handler;
 use crate::database::controllers::badactor_model_controller::{
     BadActor, BadActorModelController, BadActorQueryType, BadActorType, CreateBadActorOptions,
 };
@@ -19,7 +19,6 @@ use crate::{Context as AppContext, Logger};
 
 enum ReportOutcome {
     Success,
-    Fail,
     Cancel,
     Confirm,
 }
@@ -161,15 +160,15 @@ pub async fn deactivate(
         return Ok(());
     }
 
-    let broadcast_options = broadcast::BroadcastOptions {
+    let broadcast_options = broadcast_handler::BroadcastOptions {
         ctx,
         target_user: &target_user.unwrap(),
         bad_actor: &deactivated,
         interaction_guild: &interaction_guild,
-        broadcast_type: broadcast::BroadcastType::Deactivate,
+        broadcast_type: broadcast_handler::BroadcastType::Deactivate,
     };
 
-    broadcast::broadcast(broadcast_options).await;
+    broadcast_handler::broadcast(broadcast_options).await;
 
     ctx.say(format!("Successfully disabled report entry {report_id}."))
         .await?;
@@ -296,15 +295,15 @@ pub async fn add_screenshot(
         return Ok(());
     }
 
-    let broadcast_options = broadcast::BroadcastOptions {
+    let broadcast_options = broadcast_handler::BroadcastOptions {
         ctx,
         target_user: &target_user.unwrap(),
         bad_actor: &updated,
         interaction_guild: &interaction_guild,
-        broadcast_type: broadcast::BroadcastType::AddScreenshot,
+        broadcast_type: broadcast_handler::BroadcastType::AddScreenshot,
     };
 
-    broadcast::broadcast(broadcast_options).await;
+    broadcast_handler::broadcast(broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated screenshot for report entry {report_id}."
@@ -384,15 +383,15 @@ pub async fn replace_screenshot(
         return Ok(());
     }
 
-    let broadcast_options = broadcast::BroadcastOptions {
+    let broadcast_options = broadcast_handler::BroadcastOptions {
         ctx,
         target_user: &target_user.unwrap(),
         bad_actor: &updated,
         interaction_guild: &interaction_guild,
-        broadcast_type: broadcast::BroadcastType::ReplaceScreenshot,
+        broadcast_type: broadcast_handler::BroadcastType::ReplaceScreenshot,
     };
 
-    broadcast::broadcast(broadcast_options).await;
+    broadcast_handler::broadcast(broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated screenshot for report entry {report_id}."
@@ -441,15 +440,15 @@ pub async fn update_explanation(
         return Ok(());
     }
 
-    let broadcast_options = broadcast::BroadcastOptions {
+    let broadcast_options = broadcast_handler::BroadcastOptions {
         ctx,
         target_user: &target_user.unwrap(),
         bad_actor: &updated,
         interaction_guild: &interaction_guild,
-        broadcast_type: broadcast::BroadcastType::UpdateExplanation,
+        broadcast_type: broadcast_handler::BroadcastType::UpdateExplanation,
     };
 
-    broadcast::broadcast(broadcast_options).await;
+    broadcast_handler::broadcast(broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated explanation for report entry {report_id}."
@@ -509,15 +508,15 @@ async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
             Logger::get().error(ctx, e, log_msg).await;
         }
 
-        let broadcast_options = broadcast::BroadcastOptions {
+        let broadcast_options = broadcast_handler::BroadcastOptions {
             ctx,
             target_user,
             bad_actor: &bad_actor,
             interaction_guild,
-            broadcast_type: broadcast::BroadcastType::Report,
+            broadcast_type: broadcast_handler::BroadcastType::Report,
         };
 
-        broadcast::broadcast(broadcast_options).await;
+        broadcast_handler::broadcast(broadcast_options).await;
         return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
     }
 
@@ -577,10 +576,6 @@ async fn respond_outcome(
         ),
         ReportOutcome::Success => format!(
             "Successfully reported {} to the community!",
-            format::fdisplay(target_user)
-        ),
-        ReportOutcome::Fail => format!(
-            "Failed to report {} to the community!",
             format::fdisplay(target_user)
         ),
     };
@@ -688,7 +683,7 @@ async fn construct_embeds_message(ctx: AppContext<'_>, bad_actors: Vec<BadActor>
     let joined = future::join_all(iter)
         .await
         .into_iter()
-        .filter_map(|embed| embed)
+        .flatten()
         .collect::<Vec<_>>();
 
     let mut embeds = Vec::with_capacity(joined.len());

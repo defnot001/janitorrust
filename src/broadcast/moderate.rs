@@ -10,7 +10,7 @@ use crate::util::format;
 use crate::util::logger::Logger;
 use crate::Context as AppContext;
 
-use super::broadcast::BroadcastType;
+use super::broadcast_handler::BroadcastType;
 use super::listener::BroadcastListener;
 
 pub struct ModerateOptions<'a> {
@@ -21,7 +21,7 @@ pub struct ModerateOptions<'a> {
     pub target_user: &'a User,
 }
 
-pub async fn moderate<'a>(options: ModerateOptions<'a>) {
+pub async fn moderate(options: ModerateOptions<'_>) {
     let ModerateOptions {
         ctx,
         broadcast_type,

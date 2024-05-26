@@ -1,5 +1,5 @@
 pub mod admin;
-pub mod broadcast;
+pub mod broadcast_handler;
 pub mod listener;
 pub mod moderate;
 pub mod send;

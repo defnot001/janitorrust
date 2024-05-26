@@ -328,36 +328,6 @@ impl BadActorModelController {
         updated_db_bad_actor.try_into()
     }
 
-    /// Activate a bad actor entry by its unique ID with the given explanation.
-    /// This also updates the `updated_by_user_id` field to the user ID of the user who activated the entry.
-    pub async fn activate(
-        db_pool: &PgPool,
-        id: u64,
-        explanation: impl Into<String>,
-        updated_by_user_id: UserId,
-    ) -> anyhow::Result<BadActor> {
-        let updated_db_bad_actor = sqlx::query_as::<_, DbBadActor>(
-            r#"
-            UPDATE bad_actors
-            SET
-                is_active = true,
-                explanation = $2,
-                updated_by_user_id = $3,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1
-            RETURNING *;
-            "#,
-        )
-        .bind(id as i64)
-        .bind(explanation.into())
-        .bind(updated_by_user_id.to_string())
-        .fetch_one(db_pool)
-        .await
-        .context(format!("Failed to activate bad actor entry with ID {id}"))?;
-
-        updated_db_bad_actor.try_into()
-    }
-
     /// Get the most recent bad actor entries with the given limit and query type. Defaults to `BadActorQueryType::All`.
     pub async fn get_by_type(
         db_pool: &PgPool,
