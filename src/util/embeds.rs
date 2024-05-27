@@ -2,7 +2,7 @@ use poise::serenity_prelude as serenity;
 use serenity::{Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, User};
 
 use crate::util::random_utils;
-use crate::Context as AppContext;
+use crate::AppContext;
 
 #[derive(Default, poise::ChoiceParameter)]
 pub enum EmbedColor {

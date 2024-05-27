@@ -5,7 +5,7 @@ use futures::future;
 use poise::serenity_prelude as serenity;
 use serenity::{CacheHttp, GuildId, PartialGuild, RoleId, User, UserId};
 
-use crate::Context as AppContext;
+use crate::AppContext;
 
 pub fn parse_snowflake(snowflake: impl AsRef<str>) -> anyhow::Result<std::num::NonZeroU64> {
     let context = format!("Failed to parse snowflake `{}`", snowflake.as_ref());

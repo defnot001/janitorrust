@@ -1,13 +1,13 @@
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use poise::serenity_prelude as serenity;
-use serenity::{GuildChannel, GuildId};
+use serenity::{CacheHttp, GuildChannel, GuildId};
+use sqlx::PgPool;
 
 use crate::database::controllers::serverconfig_model_controller::{
     ServerConfig, ServerConfigComplete, ServerConfigModelController,
 };
 use crate::util::logger::Logger;
-use crate::Context as AppContext;
 
 #[derive(Debug)]
 pub struct BroadcastListener {
@@ -15,11 +15,16 @@ pub struct BroadcastListener {
     pub log_channel: GuildChannel,
 }
 
-pub async fn get_valid_listeners(ctx: AppContext<'_>) -> anyhow::Result<Vec<BroadcastListener>> {
-    let mut config_futures = ServerConfigModelController::get_all(&ctx.data().db_pool)
+pub async fn get_valid_listeners(
+    cache_http: impl CacheHttp,
+    db_pool: &PgPool,
+) -> anyhow::Result<Vec<BroadcastListener>> {
+    let mut config_futures = ServerConfigModelController::get_all(db_pool)
         .await?
         .into_iter()
-        .map(|server_config| async { get_valid_logchannel(ctx, server_config).await })
+        .map(|server_config| async {
+            get_valid_logchannel(server_config, &cache_http, db_pool).await
+        })
         .collect::<FuturesUnordered<_>>();
 
     let mut valid_configs = Vec::new();
@@ -37,7 +42,7 @@ pub async fn get_valid_listeners(ctx: AppContext<'_>) -> anyhow::Result<Vec<Broa
             Err(e) => {
                 let log_future = async {
                     let log_msg = format!("Failed to upgrade config for {}. Skipping their server for broadcasting: {e}", guild_id);
-                    Logger::get().warn(ctx, log_msg).await;
+                    Logger::get().warn(&cache_http, log_msg).await;
                 };
                 log_future.await;
             }
@@ -48,8 +53,9 @@ pub async fn get_valid_listeners(ctx: AppContext<'_>) -> anyhow::Result<Vec<Broa
 }
 
 async fn get_valid_logchannel(
-    ctx: AppContext<'_>,
     server_config: ServerConfig,
+    cache_http: impl CacheHttp,
+    db_pool: &PgPool,
 ) -> (
     GuildId,
     anyhow::Result<ServerConfigComplete>,
@@ -66,7 +72,7 @@ async fn get_valid_logchannel(
         return (server_id, err, None);
     };
 
-    let Ok(log_channel) = log_channel.to_channel(ctx).await else {
+    let Ok(log_channel) = log_channel.to_channel(&cache_http).await else {
         let err = Err(anyhow::anyhow!(
             "Cannot get log channel for {}",
             server_config.guild_id
@@ -93,7 +99,8 @@ async fn get_valid_logchannel(
         return (server_id, err, None);
     }
 
-    let complete = ServerConfigComplete::try_from_server_config(server_config, ctx).await;
+    let complete =
+        ServerConfigComplete::try_from_server_config(server_config, db_pool, &cache_http).await;
 
     (server_id, complete, Some(log_channel))
 }

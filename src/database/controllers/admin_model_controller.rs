@@ -6,7 +6,7 @@ use poise::serenity_prelude as serenity;
 use serenity::{User, UserId};
 use sqlx::{FromRow, PgPool};
 
-use crate::Context as AppContext;
+use crate::AppContext;
 
 #[derive(Debug, FromRow, Clone)]
 struct DbAdmin {

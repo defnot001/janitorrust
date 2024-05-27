@@ -1,10 +1,13 @@
 use poise::serenity_prelude as serenity;
-use serenity::{CreateAttachment, CreateEmbed, CreateMessage, PartialGuild, User};
+use serenity::{
+    CacheHttp, CreateAttachment, CreateEmbed, CreateMessage, GuildId, PartialGuild, User, UserId,
+};
+use sqlx::PgPool;
 
-use crate::database::controllers::badactor_model_controller::BadActor;
+use crate::database::controllers::badactor_model_controller::{BadActor, BroadcastEmbedOptions};
+use crate::util::config::Config;
 use crate::util::format;
 use crate::util::logger::Logger;
-use crate::Context as AppContext;
 
 use super::listener::BroadcastListener;
 use super::moderate::ModerateOptions;
@@ -35,15 +38,19 @@ impl BroadcastType {
 
 #[derive(Debug)]
 pub struct BroadcastOptions<'a> {
-    pub ctx: AppContext<'a>,
-    pub target_user: &'a User,
+    pub config: &'a Config,
+    pub db_pool: &'a PgPool,
+    pub reporting_user: &'a User,
+    pub reporting_bot_id: UserId,
     pub bad_actor: &'a BadActor,
-    pub interaction_guild: &'a PartialGuild,
+    pub bad_actor_user: &'a User,
+    pub origin_guild: &'a Option<PartialGuild>,
+    pub origin_guild_id: GuildId,
     pub broadcast_type: BroadcastType,
 }
 
 struct BroadcastToListenersOptions<'a> {
-    ctx: AppContext<'a>,
+    db_pool: &'a PgPool,
     broadcast_type: BroadcastType,
     listeners: &'a [BroadcastListener],
     bad_actor: &'a BadActor,
@@ -52,69 +59,80 @@ struct BroadcastToListenersOptions<'a> {
     attachment: Option<CreateAttachment>,
 }
 
-pub async fn broadcast(options: BroadcastOptions<'_>) {
+pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>) {
     let BroadcastOptions {
+        config,
+        db_pool,
+        reporting_user,
+        reporting_bot_id,
         bad_actor,
+        bad_actor_user,
+        origin_guild,
+        origin_guild_id,
         broadcast_type,
-        ctx,
-        interaction_guild,
-        target_user,
     } = options;
 
-    let listeners = match listener::get_valid_listeners(ctx).await {
+    let listeners = match listener::get_valid_listeners(&cache_http, db_pool).await {
         Ok(listeners) => listeners,
         Err(e) => {
             let log_msg = "Failed to get valid listeners from the database";
-            Logger::get().error(ctx, e, log_msg).await;
+            Logger::get().error(&cache_http, e, log_msg).await;
             return;
         }
     };
 
+    let embed_options = BroadcastEmbedOptions {
+        origin_guild_id,
+        origin_guild,
+        report_author: reporting_user,
+        bot_id: reporting_bot_id,
+    };
+
     let (embed, attachment) = bad_actor
-        .to_broadcast_embed(
-            ctx,
-            interaction_guild.id,
-            Some(interaction_guild),
-            target_user,
-        )
+        .to_broadcast_embed(&cache_http, embed_options)
         .await;
 
     let admin_options = admin::BroadcastAdminServerOptions {
-        ctx,
+        config,
         embed: embed.clone(),
         attachment: attachment.clone(),
         broadcast_type,
     };
 
-    if let Err(e) = admin::broadcast_admin_server(admin_options).await {
+    if let Err(e) = admin::broadcast_admin_server(&cache_http, admin_options).await {
         let log_msg = "Failed to broadcast to admin server log channel";
-        Logger::get().error(ctx, e, log_msg).await;
+        Logger::get().error(&cache_http, e, log_msg).await;
     }
 
-    if broadcast_type == BroadcastType::Report && notify_user(ctx, target_user).await.is_err() {
+    if broadcast_type == BroadcastType::Report
+        && notify_user(&cache_http, reporting_user).await.is_err()
+    {
         let log_msg = format!(
             "Failed to inform {} about the moderation actions in DM",
-            format::display(target_user)
+            format::display(reporting_user)
         );
-        Logger::get().warn(ctx, log_msg).await;
+        Logger::get().warn(&cache_http, log_msg).await;
     }
 
     let listener_options = BroadcastToListenersOptions {
-        ctx,
+        db_pool,
         broadcast_type,
         listeners: &listeners,
         bad_actor,
-        target_user,
+        target_user: bad_actor_user,
         embed,
         attachment,
     };
 
-    broadcast_to_listeners(listener_options).await;
+    broadcast_to_listeners(&cache_http, listener_options).await;
 }
 
-async fn broadcast_to_listeners(options: BroadcastToListenersOptions<'_>) {
+async fn broadcast_to_listeners(
+    cache_http: impl CacheHttp,
+    options: BroadcastToListenersOptions<'_>,
+) {
     let BroadcastToListenersOptions {
-        ctx,
+        db_pool,
         broadcast_type,
         listeners,
         bad_actor,
@@ -125,7 +143,6 @@ async fn broadcast_to_listeners(options: BroadcastToListenersOptions<'_>) {
 
     let futures = listeners.iter().map(|listener| async {
         let send_options = SendBroadcastMessageOptions {
-            ctx,
             broadcast_type,
             listener,
             bad_actor,
@@ -134,7 +151,6 @@ async fn broadcast_to_listeners(options: BroadcastToListenersOptions<'_>) {
         };
 
         let moderate_options = ModerateOptions {
-            ctx,
             broadcast_type,
             listener,
             bad_actor,
@@ -142,16 +158,16 @@ async fn broadcast_to_listeners(options: BroadcastToListenersOptions<'_>) {
         };
 
         let webhooks_options = BroadcastWebhookOptions {
-            ctx,
+            db_pool,
             broadcast_type,
             embed: &embed,
             attachment: &attachment,
         };
 
         tokio::join!(
-            send::send_broadcast_message(send_options),
-            moderate::moderate(moderate_options),
-            webhooks::broadcast_to_webhooks(webhooks_options)
+            send::send_broadcast_message(&cache_http, send_options),
+            moderate::moderate(&cache_http, moderate_options),
+            webhooks::broadcast_to_webhooks(&cache_http, webhooks_options)
         );
     });
 
@@ -173,7 +189,7 @@ pub fn get_broadcast_message(
     }
 }
 
-async fn notify_user(ctx: AppContext<'_>, target_user: &User) -> anyhow::Result<()> {
+async fn notify_user(cache_http: impl CacheHttp, target_user: &User) -> anyhow::Result<()> {
     let content = r#"
         It appears your account has been compromised and used as a spam bot.
         As part of a collaborative effort to more efficiently moderate TMC servers, the actions as listed in the embed have been taken against your account.
@@ -183,7 +199,7 @@ async fn notify_user(ctx: AppContext<'_>, target_user: &User) -> anyhow::Result<
         "#;
 
     target_user
-        .direct_message(ctx, CreateMessage::new().content(content))
+        .direct_message(cache_http, CreateMessage::new().content(content))
         .await?;
 
     Ok(())

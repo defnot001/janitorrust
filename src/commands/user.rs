@@ -7,9 +7,10 @@ use sqlx::PgPool;
 use crate::database::controllers::serverconfig_model_controller::ServerConfigModelController;
 use crate::database::controllers::user_model_controller::CreateJanitorUser;
 use crate::database::controllers::user_model_controller::{UserModelController, UserType};
+use crate::honeypot::channels::HoneypotChannels;
 use crate::util::{embeds, format, random_utils};
 use crate::{assert_admin, assert_admin_server};
-use crate::{Context as AppContext, Logger};
+use crate::{AppContext, Logger};
 
 /// Subcommands for users.
 #[poise::command(
@@ -125,7 +126,14 @@ async fn add(
 
     let added_user = UserModelController::create(&ctx.data().db_pool, create_user).await?;
 
-    if let Err(e) = handle_server_config_updates(&ctx.data().db_pool, &[], &guild_ids).await {
+    if let Err(e) = handle_server_config_updates(
+        &ctx.data().db_pool,
+        &ctx.data().honeypot_channels,
+        &[],
+        &guild_ids,
+    )
+    .await
+    {
         let log_msg = "Failed handle potential server config updates";
         Logger::get().error(ctx, e, log_msg).await;
     }
@@ -182,8 +190,13 @@ async fn update(
 
     let updated_user = UserModelController::update(&ctx.data().db_pool, create_user).await?;
 
-    if let Err(e) =
-        handle_server_config_updates(&ctx.data().db_pool, &old_user.guild_ids, &updated_ids).await
+    if let Err(e) = handle_server_config_updates(
+        &ctx.data().db_pool,
+        &ctx.data().honeypot_channels,
+        &old_user.guild_ids,
+        &updated_ids,
+    )
+    .await
     {
         let log_msg = "Failed handle potential server config updates";
         Logger::get().error(ctx, e, log_msg).await;
@@ -208,8 +221,13 @@ async fn remove(
 
     let deleted_user = UserModelController::delete(&ctx.data().db_pool, user.id).await?;
 
-    if let Err(e) =
-        handle_server_config_updates(&ctx.data().db_pool, &deleted_user.guild_ids, &[]).await
+    if let Err(e) = handle_server_config_updates(
+        &ctx.data().db_pool,
+        &ctx.data().honeypot_channels,
+        &deleted_user.guild_ids,
+        &[],
+    )
+    .await
     {
         let log_msg = "Failed handle potential server config updates";
         Logger::get().error(ctx, e, log_msg).await;
@@ -226,6 +244,7 @@ async fn remove(
 
 async fn handle_server_config_updates(
     db_pool: &PgPool,
+    honeypot_channels: &HoneypotChannels,
     old_ids: &[GuildId],
     new_ids: &[GuildId],
 ) -> anyhow::Result<()> {
@@ -236,12 +255,10 @@ async fn handle_server_config_updates(
             .map(|&g| ServerConfigModelController::create_default_if_not_exists(db_pool, g)),
     );
 
-    let remove_res = futures::future::try_join_all(
-        old_ids
-            .iter()
-            .filter(|&id| !new_ids.contains(id))
-            .map(|&g| ServerConfigModelController::delete_if_needed(db_pool, g)),
-    );
+    let remove_res =
+        futures::future::try_join_all(old_ids.iter().filter(|&id| !new_ids.contains(id)).map(
+            |&g| ServerConfigModelController::delete_if_needed(db_pool, g, honeypot_channels),
+        ));
 
     tokio::try_join!(add_res, remove_res).context("Failed to handle server config updates")?;
 

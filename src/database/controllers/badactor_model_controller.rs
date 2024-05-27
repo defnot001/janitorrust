@@ -5,13 +5,13 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{
-    CreateAttachment, CreateEmbed, CreateEmbedFooter, GuildId, Mentionable, PartialGuild,
-    User as SerenityUser, User, UserId,
+    CacheHttp, CreateAttachment, CreateEmbed, CreateEmbedFooter, GuildId, Mentionable,
+    PartialGuild, User as SerenityUser, User, UserId,
 };
 use sqlx::{FromRow, PgPool};
 
 use crate::util::{format, random_utils, screenshot};
-use crate::{Context as AppContext, Logger};
+use crate::Logger;
 
 #[derive(Debug, Copy, Clone, poise::ChoiceParameter)]
 pub enum BadActorType {
@@ -71,47 +71,60 @@ pub struct BadActor {
     pub updated_by_user_id: UserId,
 }
 
+#[derive(Debug)]
+pub struct BroadcastEmbedOptions<'a> {
+    pub origin_guild_id: GuildId,
+    pub origin_guild: &'a Option<PartialGuild>,
+    pub report_author: &'a User,
+    pub bot_id: UserId,
+}
+
 impl BadActor {
-    pub async fn user(&self, ctx: AppContext<'_>) -> Option<SerenityUser> {
-        self.user_id.to_user(ctx).await.ok()
+    pub async fn user(&self, cache_http: impl CacheHttp) -> Option<SerenityUser> {
+        self.user_id.to_user(cache_http).await.ok()
     }
 
     /// Infailliable method to get a broadcast embed from a bad actor.
-    pub async fn to_broadcast_embed(
+    pub async fn to_broadcast_embed<'a>(
         &self,
-        ctx: AppContext<'_>,
-        origin_guild_id: GuildId,
-        origin_guild: Option<&PartialGuild>,
-        target_user: &User,
+        cache_http: impl CacheHttp,
+        options: BroadcastEmbedOptions<'a>,
     ) -> (CreateEmbed, Option<CreateAttachment>) {
+        let BroadcastEmbedOptions {
+            origin_guild_id,
+            origin_guild,
+            report_author,
+            bot_id,
+        } = options;
+
         let explanation = self
             .explanation
             .clone()
             .unwrap_or("No explanation provided.".to_string());
 
-        let title = format!(
-            "{} (`{}`)",
-            target_user
-                .global_name
-                .clone()
-                .unwrap_or(target_user.name.clone()),
-            self.user_id
-        );
-        let thumbnail = target_user
-            .static_avatar_url()
-            .unwrap_or(target_user.default_avatar_url());
-        let author = format!("{} (`{}`)", ctx.author().mention(), ctx.author().id);
+        let target_user = self.user(&cache_http).await;
 
-        let display_guild = if let Some(g) = origin_guild {
-            format::fdisplay(g)
-        } else {
-            origin_guild_id.to_string()
-        };
+        let title = target_user
+            .clone()
+            .map(|u| {
+                format!(
+                    "{} (`{}`)",
+                    u.global_name.clone().unwrap_or(u.name.clone()),
+                    self.user_id
+                )
+            })
+            .unwrap_or(format!("Unknown User (`{}`)", self.user_id));
+
+        let author = format!("{} (`{}`)", report_author.mention(), report_author.id);
+
+        let display_guild = origin_guild
+            .as_ref()
+            .map(format::fdisplay)
+            .unwrap_or(origin_guild_id.to_string());
 
         let embed = CreateEmbed::default()
             .title(title)
             .timestamp(Utc::now())
-            .thumbnail(thumbnail)
             .field("Report ID", self.id.to_string(), true)
             .field("Active", random_utils::display_bool(self.is_active), true)
             .field("Type", self.actor_type.to_string(), true)
@@ -119,8 +132,14 @@ impl BadActor {
             .field("Server of Origin", display_guild, false)
             .field("Last Updated By", author, false);
 
+        // add thumbnail
+        let embed = match target_user {
+            None => embed,
+            Some(u) => embed.thumbnail(u.static_avatar_url().unwrap_or(u.default_avatar_url())),
+        };
+
         // add footer
-        let embed = match ctx.framework().bot_id.to_user(&ctx).await {
+        let embed = match bot_id.to_user(&cache_http).await {
             Ok(bot_user) => embed.footer(
                 CreateEmbedFooter::new(
                     bot_user
@@ -136,7 +155,7 @@ impl BadActor {
             ),
             Err(e) => {
                 let log_msg = "Failed to get bot user";
-                Logger::get().error(ctx, e, log_msg).await;
+                Logger::get().error(&cache_http, e, log_msg).await;
                 embed
             }
         };

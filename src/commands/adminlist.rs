@@ -1,7 +1,7 @@
 use crate::assert_user;
 use crate::database::controllers::admin_model_controller::AdminModelController;
 use crate::util::format;
-use crate::Context as AppContext;
+use crate::AppContext;
 
 /// Get the list of admins of this bot.
 #[poise::command(slash_command, guild_only = true)]

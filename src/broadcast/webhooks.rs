@@ -3,14 +3,13 @@ use std::str::FromStr;
 use anyhow::Context;
 use futures::future;
 use poise::serenity_prelude as serenity;
-use serenity::{CreateAttachment, CreateEmbed, ExecuteWebhook, GuildId, Webhook};
+use serenity::{CacheHttp, CreateAttachment, CreateEmbed, ExecuteWebhook, GuildId, Webhook};
 use sqlx::prelude::FromRow;
 use sqlx::PgPool;
 use url::Url;
 
 use crate::util::format;
 use crate::util::logger::Logger;
-use crate::Context as AppContext;
 
 use super::broadcast_handler::BroadcastType;
 
@@ -58,31 +57,34 @@ struct WebhookListener {
 }
 
 pub struct BroadcastWebhookOptions<'a> {
-    pub ctx: AppContext<'a>,
+    pub db_pool: &'a PgPool,
     pub broadcast_type: BroadcastType,
     pub embed: &'a CreateEmbed,
     pub attachment: &'a Option<CreateAttachment>,
 }
 
-pub async fn broadcast_to_webhooks(options: BroadcastWebhookOptions<'_>) {
+pub async fn broadcast_to_webhooks(
+    cache_http: impl CacheHttp,
+    options: BroadcastWebhookOptions<'_>,
+) {
     let BroadcastWebhookOptions {
-        ctx,
+        db_pool,
         broadcast_type,
         embed,
         attachment,
     } = options;
 
-    let webhooks = match get_webhooks_from_db(&ctx.data().db_pool).await {
+    let webhooks = match get_webhooks_from_db(db_pool).await {
         Ok(webhooks) => webhooks,
         Err(e) => {
             let log_msg = "Failed to get webhooks to broadcast to from the database";
-            Logger::get().error(ctx, e, log_msg).await;
+            Logger::get().error(&cache_http, e, log_msg).await;
 
             return;
         }
     };
 
-    let webhooks = get_discord_webhooks(ctx, webhooks).await;
+    let webhooks = get_discord_webhooks(&cache_http, webhooks).await;
 
     let futures = webhooks.into_iter().map(|l| {
         let execute = if let Some(attachment) = attachment.clone() {
@@ -96,13 +98,15 @@ pub async fn broadcast_to_webhooks(options: BroadcastWebhookOptions<'_>) {
                 .embed(embed.clone())
         };
 
+        let http = cache_http.http();
+
         async move {
-            if let Err(e) = l.webhook.execute(ctx, false, execute).await {
+            if let Err(e) = l.webhook.execute(http, false, execute).await {
                 let log_msg = format!(
                     "Failed to send broadcast embed to webhook in guild {} ({})",
                     l.guild_name, l.guild_id
                 );
-                Logger::get().error(ctx, e, log_msg).await;
+                Logger::get().error(http, e, log_msg).await;
             }
         }
     });
@@ -121,13 +125,14 @@ async fn get_webhooks_from_db(db_pool: &PgPool) -> anyhow::Result<Vec<BroadcastW
 }
 
 async fn get_discord_webhooks(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     webhooks: Vec<BroadcastWebhook>,
 ) -> Vec<WebhookListener> {
     let len = webhooks.len();
+    let http = cache_http.http();
 
     let iter = webhooks.into_iter().map(|w| async move {
-        let webhook = Webhook::from_url(ctx, w.webhook_url.as_str())
+        let webhook = Webhook::from_url(http, w.webhook_url.as_str())
             .await
             .map_err(anyhow::Error::from);
 
@@ -156,20 +161,20 @@ async fn get_discord_webhooks(
             Err(e) => {
                 let logger = Logger::get();
 
-                if let Ok(guild) = listener.guild_id.to_partial_guild(ctx).await {
+                if let Ok(guild) = listener.guild_id.to_partial_guild(&cache_http).await {
                     let log_msg = format!(
                         "Failed to connect to webhook in guild {}",
                         format::display(&guild)
                     );
 
-                    logger.error(ctx, e, log_msg).await;
+                    logger.error(&cache_http, e, log_msg).await;
                 } else {
                     let log_msg = format!(
                         "Failed to connect to webhook in guild {} ({})",
                         listener.guild_name, listener.guild_id
                     );
 
-                    logger.error(ctx, e, log_msg).await;
+                    logger.error(&cache_http, e, log_msg).await;
                 }
             }
         }

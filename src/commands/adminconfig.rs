@@ -6,7 +6,7 @@ use crate::database::controllers::serverconfig_model_controller::{
 };
 use crate::util::random_utils::parse_guild_ids;
 use crate::util::screenshot::FileManager;
-use crate::Context as AppContext;
+use crate::AppContext;
 use crate::{assert_admin, assert_admin_server};
 
 /// Subcommands for admins to inspect the bot's server configs.
@@ -41,7 +41,7 @@ async fn display_configs(
 
     for config in configs {
         embeds.push(
-            ServerConfigComplete::try_from_server_config(config, ctx)
+            ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx)
                 .await?
                 .to_embed(ctx.author()),
         );

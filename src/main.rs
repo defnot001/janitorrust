@@ -4,26 +4,36 @@
 mod broadcast;
 mod commands;
 mod database;
+mod honeypot;
 mod util;
 
+use std::sync::Arc;
+
 use commands::{adminconfig, adminlist, badactor, config, scores, user};
+use dashmap::DashSet;
+use honeypot::channels::HoneypotChannels;
+use honeypot::message::{handle_message, Queue};
 use poise::serenity_prelude as serenity;
 use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
 
+use tokio::sync::Mutex;
 use util::config::Config;
 use util::logger::Logger;
 use util::{error, format};
 
 use crate::database::migrate::migrate_db;
+use crate::honeypot::channels::populate_honeypot_channels;
 
 #[derive(Debug)]
 pub struct Data {
     pub db_pool: sqlx::PgPool,
     pub config: Config,
+    pub queue: Queue,
+    pub honeypot_channels: HoneypotChannels,
 }
 
-pub type Context<'a> = poise::Context<'a, Data, anyhow::Error>;
+pub type AppContext<'a> = poise::Context<'a, Data, anyhow::Error>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -44,7 +54,11 @@ async fn main() -> anyhow::Result<()> {
 
     migrate_db(&db_pool).await;
 
-    let intents = serenity::GatewayIntents::GUILDS | serenity::GatewayIntents::GUILD_MODERATION;
+    let intents = serenity::GatewayIntents::GUILDS
+        | serenity::GatewayIntents::GUILD_MODERATION
+        | serenity::GatewayIntents::GUILD_MESSAGES
+        | serenity::GatewayIntents::MESSAGE_CONTENT;
+
     let token = config.bot_token.clone();
 
     let framework = poise::Framework::builder()
@@ -72,7 +86,16 @@ async fn main() -> anyhow::Result<()> {
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data { db_pool, config })
+
+                let queue = Arc::new(Mutex::new(Vec::new()));
+                let honeypot_channels = Arc::new(DashSet::new());
+
+                Ok(Data {
+                    db_pool,
+                    config,
+                    queue,
+                    honeypot_channels,
+                })
             })
         })
         .build();
@@ -89,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
 async fn event_handler(
     ctx: &serenity::Context,
     event: &serenity::FullEvent,
-    _framework: poise::FrameworkContext<'_, Data, anyhow::Error>,
+    framework: poise::FrameworkContext<'_, Data, anyhow::Error>,
 ) -> Result<(), anyhow::Error> {
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
@@ -100,6 +123,12 @@ async fn event_handler(
                 state: None,
                 url: None,
             }));
+
+            let db_pool = &framework.user_data.db_pool;
+            let honeypot_channels = &framework.user_data.honeypot_channels;
+
+            populate_honeypot_channels(honeypot_channels, db_pool).await;
+            tracing::info!("Successfully populated honeypot channels");
         }
         serenity::FullEvent::InteractionCreate { interaction, .. } => {
             if interaction.kind() != InteractionType::Command {
@@ -134,6 +163,9 @@ async fn event_handler(
                     }
                 };
             }
+        }
+        serenity::FullEvent::Message { new_message } => {
+            handle_message(ctx, framework, new_message).await;
         }
         _ => {}
     }

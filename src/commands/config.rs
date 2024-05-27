@@ -6,7 +6,7 @@ use crate::database::controllers::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
 use crate::util::random_utils;
-use crate::Context as AppContext;
+use crate::AppContext;
 use crate::{assert_user_server, oops};
 
 /// Subcommands for server configs.
@@ -35,7 +35,7 @@ async fn display(ctx: AppContext<'_>) -> anyhow::Result<()> {
         oops!(ctx, user_msg);
     };
 
-    let embed = ServerConfigComplete::try_from_server_config(config, ctx)
+    let embed = ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx)
         .await?
         .to_embed(ctx.author());
 
@@ -93,10 +93,15 @@ async fn update(
         ignored_roles,
     };
 
-    let updated =
-        ServerConfigModelController::update(&ctx.data().db_pool, guild_id, update_values).await?;
+    let updated = ServerConfigModelController::update(
+        &ctx.data().db_pool,
+        guild_id,
+        &ctx.data().honeypot_channels,
+        update_values,
+    )
+    .await?;
 
-    let embed = ServerConfigComplete::try_from_server_config(updated, ctx)
+    let embed = ServerConfigComplete::try_from_server_config(updated, &ctx.data().db_pool, &ctx)
         .await?
         .to_embed(ctx.author());
 

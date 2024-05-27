@@ -1,29 +1,27 @@
 use chrono::{Days, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{
-    CreateMessage, GuildChannel, GuildId, Member, Mentionable, PartialGuild, RoleId, User,
+    CacheHttp, CreateMessage, GuildChannel, GuildId, Member, Mentionable, PartialGuild, RoleId,
+    User,
 };
 
 use crate::database::controllers::badactor_model_controller::{BadActor, BadActorType};
 use crate::database::controllers::serverconfig_model_controller::{ActionLevel, ServerConfig};
 use crate::util::format;
 use crate::util::logger::Logger;
-use crate::Context as AppContext;
 
 use super::broadcast_handler::BroadcastType;
 use super::listener::BroadcastListener;
 
 pub struct ModerateOptions<'a> {
-    pub ctx: AppContext<'a>,
     pub broadcast_type: BroadcastType,
     pub listener: &'a BroadcastListener,
     pub bad_actor: &'a BadActor,
     pub target_user: &'a User,
 }
 
-pub async fn moderate(options: ModerateOptions<'_>) {
+pub async fn moderate(cache_http: impl CacheHttp, options: ModerateOptions<'_>) {
     let ModerateOptions {
-        ctx,
         broadcast_type,
         listener,
         bad_actor,
@@ -43,14 +41,14 @@ pub async fn moderate(options: ModerateOptions<'_>) {
     let member = listener
         .config
         .guild
-        .member(ctx, bad_actor.user_id)
+        .member(&cache_http, bad_actor.user_id)
         .await
         .ok();
 
     // the only moderation action we can take on people who are not members it to ban them
     if member.is_none() && action_level == ActionLevel::Ban {
         let _ban_result = ban(
-            ctx,
+            &cache_http,
             &listener.config.guild,
             target_user,
             &listener.log_channel,
@@ -68,13 +66,17 @@ pub async fn moderate(options: ModerateOptions<'_>) {
             format::fdisplay(target_user)
         ));
 
-        if let Err(e) = listener.log_channel.send_message(ctx, user_msg).await {
+        if let Err(e) = listener
+            .log_channel
+            .send_message(&cache_http, user_msg)
+            .await
+        {
             let log_msg = format!(
                 "Failed to send user not member message to #{} in {}",
                 listener.log_channel.name,
                 format::display(&listener.config.guild)
             );
-            Logger::get().error(ctx, e, log_msg).await;
+            Logger::get().error(&cache_http, e, log_msg).await;
         }
 
         return;
@@ -90,7 +92,7 @@ pub async fn moderate(options: ModerateOptions<'_>) {
 
     if !non_ignored_roles.is_empty() {
         inform_about_non_ignored(
-            ctx,
+            &cache_http,
             &non_ignored_roles,
             &listener.log_channel,
             &listener.config.guild,
@@ -105,7 +107,7 @@ pub async fn moderate(options: ModerateOptions<'_>) {
         ActionLevel::Notify => Ok(()),
         ActionLevel::Timeout => {
             timeout(
-                ctx,
+                &cache_http,
                 &listener.config.guild,
                 &mut member,
                 &listener.log_channel,
@@ -113,11 +115,17 @@ pub async fn moderate(options: ModerateOptions<'_>) {
             .await
         }
         ActionLevel::Kick => {
-            kick(ctx, &listener.config.guild, &member, &listener.log_channel).await
+            kick(
+                &cache_http,
+                &listener.config.guild,
+                &member,
+                &listener.log_channel,
+            )
+            .await
         }
         ActionLevel::SoftBan => {
             soft_ban(
-                ctx,
+                &cache_http,
                 &listener.config.guild,
                 target_user,
                 &listener.log_channel,
@@ -126,7 +134,7 @@ pub async fn moderate(options: ModerateOptions<'_>) {
         }
         ActionLevel::Ban => {
             ban(
-                ctx,
+                &cache_http,
                 &listener.config.guild,
                 target_user,
                 &listener.log_channel,
@@ -136,11 +144,17 @@ pub async fn moderate(options: ModerateOptions<'_>) {
         }
     };
 
-    log_moderation_result(ctx, moderation_result, target_user, &listener.config.guild).await;
+    log_moderation_result(
+        &cache_http,
+        moderation_result,
+        target_user,
+        &listener.config.guild,
+    )
+    .await;
 }
 
 async fn log_moderation_result(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     result: anyhow::Result<()>,
     target_user: &User,
     guild: &PartialGuild,
@@ -152,12 +166,12 @@ async fn log_moderation_result(
             format::display(guild)
         );
 
-        Logger::get().error(ctx, e, log_msg).await;
+        Logger::get().error(cache_http, e, log_msg).await;
     }
 }
 
 async fn inform_about_non_ignored(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     non_ignored_roles: &[RoleId],
     log_channel: &GuildChannel,
     guild: &PartialGuild,
@@ -172,11 +186,11 @@ async fn inform_about_non_ignored(
     let content = format!("User {} has roles that are not ignored. Those roles are {roles}. Skipping all moderation action.", format::fdisplay(target_user));
 
     if let Err(e) = log_channel
-        .send_message(ctx, CreateMessage::new().content(content))
+        .send_message(&cache_http, CreateMessage::new().content(content))
         .await
     {
         let log_msg = format!("Failed to inform {} that the member {} cannot be moderated since they have roles that are not ignored.", format::display(guild), format::display(target_user));
-        Logger::get().error(ctx, e, log_msg).await;
+        Logger::get().error(cache_http, e, log_msg).await;
     }
 }
 
@@ -217,13 +231,15 @@ fn get_moderation_action(
 }
 
 async fn ban(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     guild: &PartialGuild,
     target_user: &User,
     log_channel: &GuildChannel,
     reason: impl AsRef<str>,
 ) -> anyhow::Result<()> {
-    guild.ban_with_reason(ctx, target_user, 7, reason).await?;
+    guild
+        .ban_with_reason(cache_http.http(), target_user, 7, reason)
+        .await?;
 
     tracing::info!(
         "Banned {} from {}.",
@@ -236,19 +252,19 @@ async fn ban(
         format::fdisplay(target_user)
     ));
 
-    log_channel.send_message(ctx, user_msg).await?;
+    log_channel.send_message(cache_http, user_msg).await?;
 
     Ok(())
 }
 
 async fn soft_ban(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     guild: &PartialGuild,
     target_user: &User,
     log_channel: &GuildChannel,
 ) -> anyhow::Result<()> {
-    guild.ban(ctx, target_user, 7).await?;
-    guild.unban(ctx, target_user).await?;
+    guild.ban(cache_http.http(), target_user, 7).await?;
+    guild.unban(cache_http.http(), target_user).await?;
 
     tracing::info!(
         "Softbanned {} from {}.",
@@ -261,20 +277,20 @@ async fn soft_ban(
         format::fdisplay(target_user)
     ));
 
-    log_channel.send_message(ctx, user_msg).await?;
+    log_channel.send_message(cache_http, user_msg).await?;
 
     Ok(())
 }
 
 async fn timeout(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     guild: &PartialGuild,
     member: &mut Member,
     log_channel: &GuildChannel,
 ) -> anyhow::Result<()> {
     let in_seven_days = Utc::now() + Days::new(7);
     member
-        .disable_communication_until_datetime(ctx, in_seven_days.into())
+        .disable_communication_until_datetime(&cache_http, in_seven_days.into())
         .await?;
 
     tracing::info!(
@@ -288,18 +304,18 @@ async fn timeout(
         format::fdisplay(&member.user)
     ));
 
-    log_channel.send_message(ctx, user_msg).await?;
+    log_channel.send_message(cache_http, user_msg).await?;
 
     Ok(())
 }
 
 async fn kick(
-    ctx: AppContext<'_>,
+    cache_http: impl CacheHttp,
     guild: &PartialGuild,
     member: &Member,
     log_channel: &GuildChannel,
 ) -> anyhow::Result<()> {
-    member.kick(ctx).await?;
+    member.kick(&cache_http).await?;
 
     tracing::info!(
         "Kicked {} from {}.",
@@ -312,7 +328,7 @@ async fn kick(
         format::fdisplay(&member.user)
     ));
 
-    log_channel.send_message(ctx, user_msg).await?;
+    log_channel.send_message(cache_http, user_msg).await?;
 
     Ok(())
 }

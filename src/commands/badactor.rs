@@ -9,13 +9,14 @@ use serenity::{
 
 use crate::assert_user_server;
 use crate::broadcast::broadcast_handler;
+use crate::database::controllers::badactor_model_controller::BroadcastEmbedOptions;
 use crate::database::controllers::badactor_model_controller::{
     BadActor, BadActorModelController, BadActorQueryType, BadActorType, CreateBadActorOptions,
 };
 use crate::database::controllers::scores_model_controller::ScoresModelController;
 use crate::util::random_utils;
 use crate::util::{embeds, format, locks, screenshot};
-use crate::{Context as AppContext, Logger};
+use crate::{AppContext, Logger};
 
 enum ReportOutcome {
     Success,
@@ -30,7 +31,7 @@ struct CollectorOptions<'a> {
     screenshot: Option<Attachment>,
     actor_type: BadActorType,
     explanation: Option<String>,
-    interaction_guild: &'a PartialGuild,
+    interaction_guild: PartialGuild,
 }
 
 /// Subcommands for server configs.
@@ -101,7 +102,7 @@ pub async fn report(
             screenshot,
             actor_type,
             explanation,
-            interaction_guild: &interaction_guild,
+            interaction_guild,
         };
 
         return handle_collector(options).await;
@@ -146,9 +147,7 @@ pub async fn deactivate(
     )
     .await?;
 
-    let target_user = deactivated.user(ctx).await;
-
-    if target_user.is_none() {
+    let Some(target_user) = deactivated.user(ctx).await else {
         let log_msg = format!(
             "User with ID {} does not exist anymore, skipping broadcast",
             deactivated.user_id
@@ -158,17 +157,22 @@ pub async fn deactivate(
         ctx.say("This user's account no longer exists, deactivating it does not have any impact.")
             .await?;
         return Ok(());
-    }
-
-    let broadcast_options = broadcast_handler::BroadcastOptions {
-        ctx,
-        target_user: &target_user.unwrap(),
-        bad_actor: &deactivated,
-        interaction_guild: &interaction_guild,
-        broadcast_type: broadcast_handler::BroadcastType::Deactivate,
     };
 
-    broadcast_handler::broadcast(broadcast_options).await;
+    let origin_guild_id = interaction_guild.id;
+    let broadcast_options = broadcast_handler::BroadcastOptions {
+        bad_actor: &deactivated,
+        bad_actor_user: &target_user,
+        reporting_user: ctx.author(),
+        broadcast_type: broadcast_handler::BroadcastType::Deactivate,
+        config: &ctx.data().config,
+        db_pool: &ctx.data().db_pool,
+        origin_guild: &Some(interaction_guild),
+        origin_guild_id,
+        reporting_bot_id: ctx.framework().bot_id,
+    };
+
+    broadcast_handler::broadcast(&ctx, broadcast_options).await;
 
     ctx.say(format!("Successfully disabled report entry {report_id}."))
         .await?;
@@ -281,9 +285,7 @@ pub async fn add_screenshot(
     )
     .await?;
 
-    let target_user = updated.user(ctx).await;
-
-    if target_user.is_none() {
+    let Some(target_user) = updated.user(ctx).await else {
         let log_msg = format!(
             "User with ID {} does not exist anymore, skipping broadcast",
             updated.user_id
@@ -293,17 +295,22 @@ pub async fn add_screenshot(
         ctx.say("This user's account no longer exists. The screenshot was updated in the database but broadcasting will be skipped.")
             .await?;
         return Ok(());
-    }
-
-    let broadcast_options = broadcast_handler::BroadcastOptions {
-        ctx,
-        target_user: &target_user.unwrap(),
-        bad_actor: &updated,
-        interaction_guild: &interaction_guild,
-        broadcast_type: broadcast_handler::BroadcastType::AddScreenshot,
     };
 
-    broadcast_handler::broadcast(broadcast_options).await;
+    let origin_guild_id = interaction_guild.id;
+    let broadcast_options = broadcast_handler::BroadcastOptions {
+        bad_actor: &updated,
+        bad_actor_user: &target_user,
+        reporting_user: ctx.author(),
+        broadcast_type: broadcast_handler::BroadcastType::AddScreenshot,
+        config: &ctx.data().config,
+        db_pool: &ctx.data().db_pool,
+        origin_guild: &Some(interaction_guild),
+        origin_guild_id,
+        reporting_bot_id: ctx.framework().bot_id,
+    };
+
+    broadcast_handler::broadcast(&ctx, broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated screenshot for report entry {report_id}."
@@ -369,9 +376,7 @@ pub async fn replace_screenshot(
     )
     .await?;
 
-    let target_user = updated.user(ctx).await;
-
-    if target_user.is_none() {
+    let Some(target_user) = updated.user(ctx).await else {
         let log_msg = format!(
             "User with ID {} does not exist anymore, skipping broadcast",
             updated.user_id
@@ -381,17 +386,22 @@ pub async fn replace_screenshot(
         ctx.say("This user's account no longer exists. The screenshot was updated in the database but broadcasting will be skipped.")
             .await?;
         return Ok(());
-    }
-
-    let broadcast_options = broadcast_handler::BroadcastOptions {
-        ctx,
-        target_user: &target_user.unwrap(),
-        bad_actor: &updated,
-        interaction_guild: &interaction_guild,
-        broadcast_type: broadcast_handler::BroadcastType::ReplaceScreenshot,
     };
 
-    broadcast_handler::broadcast(broadcast_options).await;
+    let origin_guild_id = interaction_guild.id;
+    let broadcast_options = broadcast_handler::BroadcastOptions {
+        bad_actor: &updated,
+        bad_actor_user: &target_user,
+        reporting_user: ctx.author(),
+        broadcast_type: broadcast_handler::BroadcastType::ReplaceScreenshot,
+        config: &ctx.data().config,
+        db_pool: &ctx.data().db_pool,
+        origin_guild: &Some(interaction_guild),
+        origin_guild_id,
+        reporting_bot_id: ctx.framework().bot_id,
+    };
+
+    broadcast_handler::broadcast(&ctx, broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated screenshot for report entry {report_id}."
@@ -426,9 +436,7 @@ pub async fn update_explanation(
     )
     .await?;
 
-    let target_user = updated.user(ctx).await;
-
-    if target_user.is_none() {
+    let Some(target_user) = updated.user(ctx).await else {
         let log_msg = format!(
             "User with ID {} does not exist anymore, skipping broadcast",
             updated.user_id
@@ -438,17 +446,22 @@ pub async fn update_explanation(
         ctx.say("This user's account no longer exists. The explanation was updated in the database but broadcasting will be skipped.")
             .await?;
         return Ok(());
-    }
-
-    let broadcast_options = broadcast_handler::BroadcastOptions {
-        ctx,
-        target_user: &target_user.unwrap(),
-        bad_actor: &updated,
-        interaction_guild: &interaction_guild,
-        broadcast_type: broadcast_handler::BroadcastType::UpdateExplanation,
     };
 
-    broadcast_handler::broadcast(broadcast_options).await;
+    let origin_guild_id = interaction_guild.id;
+    let broadcast_options = broadcast_handler::BroadcastOptions {
+        bad_actor: &updated,
+        bad_actor_user: &target_user,
+        reporting_user: ctx.author(),
+        broadcast_type: broadcast_handler::BroadcastType::UpdateExplanation,
+        config: &ctx.data().config,
+        db_pool: &ctx.data().db_pool,
+        origin_guild: &Some(interaction_guild),
+        origin_guild_id,
+        reporting_bot_id: ctx.framework().bot_id,
+    };
+
+    broadcast_handler::broadcast(&ctx, broadcast_options).await;
 
     ctx.say(format!(
         "Successfully updated explanation for report entry {report_id}."
@@ -503,20 +516,25 @@ async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
             let log_msg = format!(
                 "Failed to updated scores for user {} or guild {}",
                 format::display(ctx.author()),
-                format::display(interaction_guild)
+                format::display(&interaction_guild)
             );
             Logger::get().error(ctx, e, log_msg).await;
         }
 
+        let origin_guild_id = interaction_guild.id;
         let broadcast_options = broadcast_handler::BroadcastOptions {
-            ctx,
-            target_user,
             bad_actor: &bad_actor,
-            interaction_guild,
+            bad_actor_user: target_user,
+            reporting_user: ctx.author(),
             broadcast_type: broadcast_handler::BroadcastType::Report,
+            config: &ctx.data().config,
+            db_pool: &ctx.data().db_pool,
+            origin_guild: &Some(interaction_guild),
+            origin_guild_id,
+            reporting_bot_id: ctx.framework().bot_id,
         };
 
-        broadcast_handler::broadcast(broadcast_options).await;
+        broadcast_handler::broadcast(&ctx, broadcast_options).await;
         return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
     }
 
@@ -665,27 +683,19 @@ async fn construct_embeds_message(ctx: AppContext<'_>, bad_actors: Vec<BadActor>
     }
 
     let iter = bad_actors.into_iter().map(|b| async move {
-        let guild_id = b.origin_guild_id;
-        let guild = guild_id.to_partial_guild(ctx).await.ok();
-        let target_user = b.user(ctx).await;
+        let guild = b.origin_guild_id.to_partial_guild(ctx).await.ok();
 
-        if let Some(u) = target_user {
-            let embed = b
-                .to_broadcast_embed(ctx, guild_id, guild.as_ref(), &u)
-                .await;
+        let embed_options = BroadcastEmbedOptions {
+            bot_id: ctx.framework().bot_id,
+            origin_guild: &guild,
+            origin_guild_id: b.origin_guild_id,
+            report_author: ctx.author(),
+        };
 
-            Some(embed)
-        } else {
-            None
-        }
+        b.to_broadcast_embed(ctx, embed_options).await
     });
 
-    let joined = future::join_all(iter)
-        .await
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-
+    let joined = future::join_all(iter).await;
     let mut embeds = Vec::with_capacity(joined.len());
     let mut attachments = Vec::with_capacity(joined.len());
 

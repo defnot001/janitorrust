@@ -7,7 +7,7 @@ use crate::database::controllers::scores_model_controller::{
     GuildScoreboard, ScoresModelController, UserScoreboard,
 };
 use crate::util::{embeds, format, random_utils};
-use crate::Context as AppContext;
+use crate::AppContext;
 
 #[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
 enum ScoreboardType {

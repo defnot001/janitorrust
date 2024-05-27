@@ -5,14 +5,14 @@ use chrono::{DateTime, Utc};
 use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
 use serenity::{
-    ChannelId, CreateEmbed, GuildId, Mentionable, PartialGuild, RoleId, User as SerenityUser,
-    UserId,
+    CacheHttp, ChannelId, CreateEmbed, GuildId, Mentionable, PartialGuild, RoleId,
+    User as SerenityUser, UserId,
 };
 use sqlx::{prelude::FromRow, PgPool};
 
 use crate::database::controllers::user_model_controller::UserModelController;
+use crate::honeypot::channels::{populate_honeypot_channels, HoneypotChannels};
 use crate::util::{embeds, format};
-use crate::Context as AppContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, poise::ChoiceParameter)]
 #[repr(i8)]
@@ -59,9 +59,11 @@ struct DbServerConfig {
     log_channel_id: Option<String>,
     ping_users: bool,
     ping_role: Option<String>,
+    honeypot_channel_id: Option<String>,
     spam_action_level: i8,
     impersonation_action_level: i8,
     bigotry_action_level: i8,
+    honeypot_action_level: i8,
     ignored_roles: Vec<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -73,9 +75,11 @@ pub struct ServerConfig {
     pub log_channel_id: Option<ChannelId>,
     pub ping_users: bool,
     pub ping_role: Option<RoleId>,
+    pub honeypot_channel_id: Option<ChannelId>,
     pub spam_action_level: ActionLevel,
     pub impersonation_action_level: ActionLevel,
     pub bigotry_action_level: ActionLevel,
+    pub honeypot_action_level: ActionLevel,
     pub ignored_roles: Vec<RoleId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -90,9 +94,11 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             log_channel_id,
             ping_users,
             ping_role,
+            honeypot_channel_id,
             spam_action_level,
             impersonation_action_level,
             bigotry_action_level,
+            honeypot_action_level,
             ignored_roles,
             created_at,
             updated_at,
@@ -100,6 +106,9 @@ impl TryFrom<DbServerConfig> for ServerConfig {
 
         let guild_id = GuildId::from_str(&guild_id)?;
         let log_channel_id = log_channel_id
+            .map(|c| ChannelId::from_str(&c))
+            .transpose()?;
+        let honeypot_channel_id = honeypot_channel_id
             .map(|c| ChannelId::from_str(&c))
             .transpose()?;
         let ping_role = ping_role.map(|r| RoleId::from_str(&r)).transpose()?;
@@ -111,15 +120,18 @@ impl TryFrom<DbServerConfig> for ServerConfig {
         let spam_action_level = ActionLevel::try_from(spam_action_level)?;
         let impersonation_action_level = ActionLevel::try_from(impersonation_action_level)?;
         let bigotry_action_level = ActionLevel::try_from(bigotry_action_level)?;
+        let honeypot_action_level = ActionLevel::try_from(honeypot_action_level)?;
 
         Ok(ServerConfig {
             guild_id,
             log_channel_id,
             ping_users,
             ping_role,
+            honeypot_channel_id,
             spam_action_level,
             impersonation_action_level,
             bigotry_action_level,
+            honeypot_action_level,
             ignored_roles,
             created_at,
             updated_at,
@@ -137,17 +149,20 @@ pub struct ServerConfigComplete {
 impl ServerConfigComplete {
     pub async fn try_from_server_config(
         server_config: ServerConfig,
-        ctx: AppContext<'_>,
+        db_pool: &PgPool,
+        cache_http: impl CacheHttp,
     ) -> anyhow::Result<Self> {
-        let user_future =
-            UserModelController::get_by_guild(&ctx.data().db_pool, server_config.guild_id);
+        let user_future = UserModelController::get_by_guild(db_pool, server_config.guild_id);
 
-        let partial_future = server_config.guild_id.to_partial_guild(ctx).map_err(|e| {
-            anyhow::Error::new(e).context(format!(
-                "Failed to upgrade server config for {}",
-                server_config.guild_id
-            ))
-        });
+        let partial_future = server_config
+            .guild_id
+            .to_partial_guild(cache_http)
+            .map_err(|e| {
+                anyhow::Error::new(e).context(format!(
+                    "Failed to upgrade server config for {}",
+                    server_config.guild_id
+                ))
+            });
 
         let (users, guild) = tokio::try_join!(user_future, partial_future)?;
 
@@ -288,6 +303,7 @@ impl ServerConfigModelController {
     pub async fn update(
         pg_pool: &PgPool,
         guild_id: GuildId,
+        honeypot_channels: &HoneypotChannels,
         update: UpdateServerConfig,
     ) -> anyhow::Result<ServerConfig> {
         let previous = sqlx::query_as::<_, DbServerConfig>(
@@ -368,10 +384,17 @@ impl ServerConfigModelController {
             "Failed to update server config for guild {guild_id}"
         ))?;
 
+        populate_honeypot_channels(honeypot_channels, pg_pool).await;
+        tracing::info!("Repopulated honeypot channels");
+
         db_config.try_into()
     }
 
-    pub async fn delete_if_needed(pg_pool: &PgPool, guild_id: GuildId) -> anyhow::Result<bool> {
+    pub async fn delete_if_needed(
+        pg_pool: &PgPool,
+        guild_id: GuildId,
+        honeypot_channels: &HoneypotChannels,
+    ) -> anyhow::Result<bool> {
         let sql = r#"
             WITH user_check AS (
                 SELECT EXISTS(SELECT 1 FROM users WHERE $1 = ANY(guild_ids)) AS exists
@@ -391,6 +414,9 @@ impl ServerConfigModelController {
             .is_some();
 
         tracing::info!("Deleted unused server config for guild {guild_id}");
+
+        populate_honeypot_channels(honeypot_channels, pg_pool).await;
+        tracing::info!("Repopulated honeypot channels");
 
         Ok(deleted)
     }
