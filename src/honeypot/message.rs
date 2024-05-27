@@ -5,7 +5,10 @@ use poise::{serenity_prelude as serenity, FrameworkContext};
 use serenity::{Context, GuildId, Message, UserId};
 use tokio::sync::{Mutex, MutexGuard};
 
-// use crate::broadcast::broadcast_handler::BroadcastOptions;
+use crate::broadcast::broadcast_handler::{broadcast, BroadcastOptions, BroadcastType};
+use crate::database::controllers::badactor_model_controller::{
+    BadActorModelController, BadActorType, CreateBadActorOptions,
+};
 use crate::util::format;
 use crate::util::logger::Logger;
 use crate::Data;
@@ -71,15 +74,52 @@ pub async fn handle_message(
     drop(queue);
 
     if should_report {
-        // report_bad_actor().await;
+        let bad_actor_options = CreateBadActorOptions {
+            user_id: msg.author.id,
+            actor_type: BadActorType::Honeypot,
+            screenshot_proof: None,
+            explanation: Some("reached into the honeypot".to_string()),
+            origin_guild_id: guild_id,
+            updated_by_user_id: framework.bot_id,
+        };
 
-        // let options = BroadcastOptions {
-        //     ctx: todo!(),
-        //     target_user: todo!(),
-        //     bad_actor: todo!(),
-        //     interaction_guild: todo!(),
-        //     broadcast_type: todo!(),
-        // }
+        let bad_actor =
+            match BadActorModelController::create(&framework.user_data.db_pool, bad_actor_options)
+                .await
+            {
+                Ok(bad_actor) => bad_actor,
+                Err(e) => {
+                    let log_msg = format!(
+                        "Failed to add bad actor {} into the database after honeypot triggered.",
+                        msg.author.id
+                    );
+                    Logger::get().error(&ctx, e, log_msg).await;
+                    return;
+                }
+            };
+
+        let bot_user = match framework.bot_id.to_user(&ctx).await {
+            Ok(bot_user) => bot_user,
+            Err(e) => {
+                let log_msg = "Failed to get bot user from the API";
+                Logger::get().error(ctx, e, log_msg).await;
+                return;
+            }
+        };
+
+        let broadcast_options = BroadcastOptions {
+            config: &framework.user_data.config,
+            db_pool: &framework.user_data.db_pool,
+            reporting_user: &bot_user,
+            reporting_bot_id: bot_user.id,
+            bad_actor: &bad_actor,
+            bad_actor_user: &msg.author,
+            origin_guild: &None,
+            origin_guild_id: guild_id,
+            broadcast_type: BroadcastType::Honeypot,
+        };
+
+        broadcast(&ctx, broadcast_options).await;
     }
 }
 

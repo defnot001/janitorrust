@@ -18,6 +18,7 @@ pub enum BadActorType {
     Spam,
     Impersonation,
     Bigotry,
+    Honeypot,
 }
 
 impl Display for BadActorType {
@@ -26,6 +27,7 @@ impl Display for BadActorType {
             Self::Spam => write!(f, "spam"),
             Self::Impersonation => write!(f, "impersonation"),
             Self::Bigotry => write!(f, "bigotry"),
+            Self::Honeypot => write!(f, "honeypot"),
         }
     }
 }
@@ -38,6 +40,7 @@ impl FromStr for BadActorType {
             "spam" => Ok(Self::Spam),
             "impersonation" => Ok(Self::Impersonation),
             "bigotry" => Ok(Self::Bigotry),
+            "honeypot" => Ok(Self::Honeypot),
             _ => anyhow::bail!("Invalid actor type: {}", s),
         }
     }

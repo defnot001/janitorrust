@@ -227,6 +227,7 @@ fn get_moderation_action(
         BadActorType::Spam => server_config.spam_action_level,
         BadActorType::Impersonation => server_config.impersonation_action_level,
         BadActorType::Bigotry => server_config.bigotry_action_level,
+        BadActorType::Honeypot => server_config.honeypot_action_level,
     }
 }
 

@@ -5,9 +5,7 @@ use serenity::{
 use sqlx::PgPool;
 
 use crate::database::controllers::badactor_model_controller::{BadActor, BroadcastEmbedOptions};
-use crate::util::config::Config;
-use crate::util::format;
-use crate::util::logger::Logger;
+use crate::util::{config, format, logger};
 
 use super::listener::BroadcastListener;
 use super::moderate::ModerateOptions;
@@ -22,6 +20,7 @@ pub enum BroadcastType {
     AddScreenshot,
     ReplaceScreenshot,
     UpdateExplanation,
+    Honeypot,
 }
 
 impl BroadcastType {
@@ -32,13 +31,14 @@ impl BroadcastType {
             Self::AddScreenshot => "A screenshot proof has been added to a bad actor entry.",
             Self::UpdateExplanation => "The explanation for a bad actor has been updated.",
             Self::ReplaceScreenshot => "A screenshot has been replaced for a bad actor.",
+            Self::Honeypot => "A bad actor was caught by the honeypot.",
         }
     }
 }
 
 #[derive(Debug)]
 pub struct BroadcastOptions<'a> {
-    pub config: &'a Config,
+    pub config: &'a config::Config,
     pub db_pool: &'a PgPool,
     pub reporting_user: &'a User,
     pub reporting_bot_id: UserId,
@@ -76,7 +76,7 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
         Ok(listeners) => listeners,
         Err(e) => {
             let log_msg = "Failed to get valid listeners from the database";
-            Logger::get().error(&cache_http, e, log_msg).await;
+            logger::Logger::get().error(&cache_http, e, log_msg).await;
             return;
         }
     };
@@ -101,7 +101,7 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
 
     if let Err(e) = admin::broadcast_admin_server(&cache_http, admin_options).await {
         let log_msg = "Failed to broadcast to admin server log channel";
-        Logger::get().error(&cache_http, e, log_msg).await;
+        logger::Logger::get().error(&cache_http, e, log_msg).await;
     }
 
     if broadcast_type == BroadcastType::Report
@@ -111,7 +111,7 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
             "Failed to inform {} about the moderation actions in DM",
             format::display(reporting_user)
         );
-        Logger::get().warn(&cache_http, log_msg).await;
+        logger::Logger::get().warn(&cache_http, log_msg).await;
     }
 
     let listener_options = BroadcastToListenersOptions {
