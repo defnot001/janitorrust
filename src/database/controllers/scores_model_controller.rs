@@ -59,7 +59,7 @@ impl ScoresModelController {
         user_id: UserId,
         guild_id: GuildId,
     ) -> anyhow::Result<()> {
-        sqlx::query("BEGIN").execute(db_pool).await?;
+        let mut tx = db_pool.begin().await?;
 
         let user_res = sqlx::query(
             r#"
@@ -70,7 +70,7 @@ impl ScoresModelController {
             "#,
         )
         .bind(user_id.to_string())
-        .execute(db_pool)
+        .execute(&mut *tx)
         .await;
 
         let guild_res = sqlx::query(
@@ -82,7 +82,7 @@ impl ScoresModelController {
             "#,
         )
         .bind(guild_id.to_string())
-        .execute(db_pool)
+        .execute(&mut *tx)
         .await;
 
         if user_res.is_err() || guild_res.is_err() {
@@ -90,7 +90,7 @@ impl ScoresModelController {
             return Err(anyhow::anyhow!("Failed to create or increase scoreboards"));
         }
 
-        sqlx::query("COMMIT").execute(db_pool).await?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -153,9 +153,7 @@ impl ScoresModelController {
 
         match db_score {
             Some(db_score) => db_score.try_into(),
-            None => Err(anyhow::anyhow!(
-                "No scores for user {user_id} found in the `user_scores` table",
-            )),
+            None => Ok(UserScoreboard { score: 0, user_id }),
         }
     }
 
@@ -173,9 +171,7 @@ impl ScoresModelController {
 
         match db_score {
             Some(db_score) => db_score.try_into(),
-            None => Err(anyhow::anyhow!(
-                "No scores for guild {guild_id} found in the `guild_scores` table"
-            )),
+            None => Ok(GuildScoreboard { score: 0, guild_id }),
         }
     }
 }

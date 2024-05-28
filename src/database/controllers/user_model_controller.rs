@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use chrono::NaiveDateTime;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{CreateEmbed, GuildId, PartialGuild, User as SerenityUser, UserId};
@@ -41,7 +42,7 @@ struct DbUser {
     user_id: String,
     user_type: String,
     guild_ids: Vec<String>,
-    created_at: DateTime<Utc>,
+    created_at: NaiveDateTime,
 }
 
 #[derive(Debug)]
@@ -66,6 +67,7 @@ impl JanitorUser {
             .title(format!("User Info {}", format::fdisplay(target_user)))
             .field("Servers", guilds.join("\n"), false)
             .field("Created At", format::display_time(self.created_at), false)
+            .field("User Type", self.user_type.to_string(), false)
     }
 }
 
@@ -91,7 +93,7 @@ impl TryFrom<DbUser> for JanitorUser {
             user_id,
             user_type,
             guild_ids,
-            created_at: db_user.created_at,
+            created_at: db_user.created_at.and_utc(),
         })
     }
 }

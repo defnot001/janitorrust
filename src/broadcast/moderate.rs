@@ -60,7 +60,7 @@ pub async fn moderate(cache_http: impl CacheHttp, options: ModerateOptions<'_>) 
     }
 
     // inform the guild that the user is not a member
-    if member.is_none() {
+    let Some(mut member) = member else {
         let user_msg = CreateMessage::new().content(format!(
             "User {} is not a member of your server. Skipping moderation.",
             format::fdisplay(target_user)
@@ -80,9 +80,7 @@ pub async fn moderate(cache_http: impl CacheHttp, options: ModerateOptions<'_>) 
         }
 
         return;
-    }
-
-    let mut member = member.unwrap();
+    };
 
     let non_ignored_roles = get_non_ignored_roles(
         &member.roles,
@@ -219,7 +217,7 @@ fn get_moderation_action(
     actor_type: BadActorType,
     server_config: &ServerConfig,
 ) -> ActionLevel {
-    if broadcast_type != BroadcastType::Report {
+    if !broadcast_type.is_new_report() {
         return ActionLevel::Notify;
     }
 

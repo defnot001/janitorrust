@@ -1,2 +1,3 @@
-ALTER TABLE IF EXISTS server_configs ADD COLUMN honeypot_channel_id VARCHAR(20);
-ALTER TABLE IF EXISTS server_configs ADD COLUMN honeypot_action_level INT NOT NULL DEFAULT 0;
+ALTER TABLE IF EXISTS server_configs ADD COLUMN IF NOT EXISTS honeypot_channel_id VARCHAR(20);
+
+ALTER TABLE IF EXISTS server_configs ADD COLUMN IF NOT EXISTS honeypot_action_level INT NOT NULL DEFAULT 0;

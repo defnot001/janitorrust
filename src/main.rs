@@ -128,7 +128,7 @@ async fn event_handler(
             let honeypot_channels = &framework.user_data.honeypot_channels;
 
             populate_honeypot_channels(honeypot_channels, db_pool).await;
-            tracing::info!("Successfully populated honeypot channels");
+            tracing::info!("Successfully populated honeypot channels.");
         }
         serenity::FullEvent::InteractionCreate { interaction, .. } => {
             if interaction.kind() != InteractionType::Command {

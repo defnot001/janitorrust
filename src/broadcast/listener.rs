@@ -41,7 +41,7 @@ pub async fn get_valid_listeners(
             }
             Err(e) => {
                 let log_future = async {
-                    let log_msg = format!("Failed to upgrade config for {}. Skipping their server for broadcasting: {e}", guild_id);
+                    let log_msg = format!("Skipping guild {guild_id} for broadcasting: {e}");
                     Logger::get().warn(&cache_http, log_msg).await;
                 };
                 log_future.await;

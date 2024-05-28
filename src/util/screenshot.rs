@@ -2,7 +2,10 @@ use anyhow::Context;
 use chrono::{Datelike, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{Attachment, CreateAttachment, UserId};
-use tokio::fs::{remove_file, write, File};
+use tokio::{
+    fs::{remove_file, File},
+    io::AsyncWriteExt,
+};
 
 pub struct FileManager;
 
@@ -26,7 +29,7 @@ impl FileManager {
             ),
         };
 
-        if file_ext != "jpeg" || file_ext != "jpg" || file_ext != "png" {
+        if file_ext != "jpeg" && file_ext != "jpg" && file_ext != "png" {
             anyhow::bail!("Expected file extensions `jpeg`, `jpg` or `png` but got {file_ext}")
         }
 
@@ -39,8 +42,13 @@ impl FileManager {
 
         let attachment_content = attachment.download().await?;
         let file_name = format!("{date}_{}.{file_ext}", user_id);
+        let file_path = format!("screenshots/{}", &file_name);
 
-        write(format!("screenshots/{}", &file_name), attachment_content).await?;
+        tokio::fs::create_dir_all("screenshots").await?;
+
+        let mut file = File::create(&file_path).await?;
+        file.write_all(&attachment_content).await?;
+
         Ok(file_name)
     }
 

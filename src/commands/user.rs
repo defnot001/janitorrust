@@ -80,22 +80,8 @@ async fn info(
         return Ok(());
     };
 
-    let display_guilds = random_utils::get_guilds(&db_user.guild_ids, &ctx)
-        .await?
-        .iter()
-        .map(format::fdisplay)
-        .collect::<Vec<String>>()
-        .join("\n");
-
-    let embed = embeds::CreateJanitorEmbed::new(ctx.author())
-        .into_embed()
-        .title(format!("User Info for {}", format::fdisplay(&user)))
-        .field("Server", display_guilds, false)
-        .field(
-            "Created At",
-            format::display_time(db_user.created_at),
-            false,
-        );
+    let guilds = random_utils::get_guilds(&db_user.guild_ids, &ctx).await?;
+    let embed = db_user.to_embed(ctx.author(), &user, &guilds);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
 
@@ -111,6 +97,14 @@ async fn add(
     #[description = "Wether the user can only receive reports or also create them."]
     user_type: UserType,
 ) -> anyhow::Result<()> {
+    let thing = crate::database::controllers::admin_model_controller::AdminModelController::get(
+        &ctx.data().db_pool,
+        &ctx.author().id,
+    )
+    .await;
+
+    println!("{:#?}", thing);
+
     assert_admin!(ctx);
     assert_admin_server!(ctx);
     ctx.defer().await?;

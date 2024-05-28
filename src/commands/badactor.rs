@@ -1,6 +1,7 @@
 use futures::future;
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
+use poise::ReplyHandle;
 use serenity::{
     Attachment, ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
     CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -9,29 +10,27 @@ use serenity::{
 
 use crate::assert_user_server;
 use crate::broadcast::broadcast_handler;
+use crate::database::controllers::badactor_model_controller::BadActorType;
+use crate::database::controllers::badactor_model_controller::BadActorTypeChoice;
 use crate::database::controllers::badactor_model_controller::BroadcastEmbedOptions;
 use crate::database::controllers::badactor_model_controller::{
-    BadActor, BadActorModelController, BadActorQueryType, BadActorType, CreateBadActorOptions,
+    BadActor, BadActorModelController, BadActorQueryType, CreateBadActorOptions,
 };
 use crate::database::controllers::scores_model_controller::ScoresModelController;
+use crate::util::embeds::EmbedColor;
 use crate::util::random_utils;
 use crate::util::{embeds, format, locks, screenshot};
 use crate::{AppContext, Logger};
-
-enum ReportOutcome {
-    Success,
-    Cancel,
-    Confirm,
-}
 
 struct CollectorOptions<'a> {
     ctx: AppContext<'a>,
     target_user: &'a User,
     collector: &'a ComponentInteraction,
     screenshot: Option<Attachment>,
-    actor_type: BadActorType,
+    actor_type: BadActorTypeChoice,
     explanation: Option<String>,
     interaction_guild: PartialGuild,
+    reply_handle: ReplyHandle<'a>,
 }
 
 /// Subcommands for server configs.
@@ -41,6 +40,7 @@ struct CollectorOptions<'a> {
     subcommands(
         "report",
         "deactivate",
+        "display",
         "display_latest",
         "display_by_user",
         "add_screenshot",
@@ -58,7 +58,7 @@ pub async fn badactor(_: AppContext<'_>) -> anyhow::Result<()> {
 pub async fn report(
     ctx: AppContext<'_>,
     #[description = "The user to report. You can also paste their ID here."] target_user: User,
-    #[description = "The type of bad act the user did."] actor_type: BadActorType,
+    #[description = "The type of bad act the user did."] actor_type: BadActorTypeChoice,
     #[description = "A screenshot of the bad act. You can upload a file here."] screenshot: Option<
         Attachment,
     >,
@@ -92,7 +92,7 @@ pub async fn report(
         return Ok(());
     }
 
-    ctx.send(get_check_user_reply(ctx, &target_user)).await?;
+    let reply_handle = ctx.send(get_check_user_reply(ctx, &target_user)).await?;
 
     if let Some(collector) = get_component_collector(ctx).await {
         let options = CollectorOptions {
@@ -103,6 +103,7 @@ pub async fn report(
             actor_type,
             explanation,
             interaction_guild,
+            reply_handle,
         };
 
         return handle_collector(options).await;
@@ -111,10 +112,11 @@ pub async fn report(
     Ok(())
 }
 
+/// Deactivate the entry of a reformed bad actor.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn deactivate(
     ctx: AppContext<'_>,
-    #[description = "The ID of the report that you want to deactivate."] report_id: u64,
+    #[description = "The ID of the report that you want to deactivate."] report_id: i32,
     #[description = "Reason for deactivating the report"] explanation: String,
 ) -> anyhow::Result<()> {
     ctx.defer().await?;
@@ -167,7 +169,7 @@ pub async fn deactivate(
         broadcast_type: broadcast_handler::BroadcastType::Deactivate,
         config: &ctx.data().config,
         db_pool: &ctx.data().db_pool,
-        origin_guild: &Some(interaction_guild),
+        origin_guild: Some(interaction_guild),
         origin_guild_id,
         reporting_bot_id: ctx.framework().bot_id,
     };
@@ -180,11 +182,33 @@ pub async fn deactivate(
     Ok(())
 }
 
+/// Display a report based on its report ID.
+#[poise::command(slash_command, guild_only = true)]
+pub async fn display(
+    ctx: AppContext<'_>,
+    #[description = "The report ID of the report you want to be displayed."] report_id: i32,
+) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_user_server!(ctx);
+
+    let bad_actor = BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?;
+
+    if let Some(bad_actor) = bad_actor {
+        let reply = construct_embeds_message(ctx, vec![bad_actor], EmbedColor::Cyan).await;
+        ctx.send(reply).await?;
+    } else {
+        ctx.say("This entry does not exist!").await?;
+    }
+
+    Ok(())
+}
+
+/// Display the latest reports.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn display_latest(
     ctx: AppContext<'_>,
     #[description = "The amount of entries you want to display. Max 10. Defaults to 5."]
-    limit: Option<u8>,
+    limit: Option<i64>,
     #[description = "The type of reports you want to display. Defaults to all report types."]
     report_type: Option<BadActorQueryType>,
 ) -> anyhow::Result<()> {
@@ -200,12 +224,13 @@ pub async fn display_latest(
     let latest =
         BadActorModelController::get_by_type(&ctx.data().db_pool, limit, report_type).await?;
 
-    let reply = construct_embeds_message(ctx, latest).await;
+    let reply = construct_embeds_message(ctx, latest, EmbedColor::Cyan).await;
     ctx.send(reply).await?;
 
     Ok(())
 }
 
+/// Display all reports concerning a specific user.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn display_by_user(
     ctx: AppContext<'_>,
@@ -227,16 +252,17 @@ pub async fn display_by_user(
         return Ok(());
     }
 
-    let reply = construct_embeds_message(ctx, entries).await;
+    let reply = construct_embeds_message(ctx, entries, EmbedColor::Cyan).await;
     ctx.send(reply).await?;
 
     Ok(())
 }
 
+/// Add a screenshot to a bad actor entry that does not already have one.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn add_screenshot(
     ctx: AppContext<'_>,
-    #[description = "The report ID you want to add the screenshot to."] report_id: u64,
+    #[description = "The report ID you want to add the screenshot to."] report_id: i32,
     #[description = "The screenshot you want to add. You can upload a file here."]
     screenshot: Attachment,
 ) -> anyhow::Result<()> {
@@ -305,7 +331,7 @@ pub async fn add_screenshot(
         broadcast_type: broadcast_handler::BroadcastType::AddScreenshot,
         config: &ctx.data().config,
         db_pool: &ctx.data().db_pool,
-        origin_guild: &Some(interaction_guild),
+        origin_guild: Some(interaction_guild),
         origin_guild_id,
         reporting_bot_id: ctx.framework().bot_id,
     };
@@ -320,10 +346,11 @@ pub async fn add_screenshot(
     Ok(())
 }
 
+/// Replace and existing screenshot for a bad actor with a new one.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn replace_screenshot(
     ctx: AppContext<'_>,
-    #[description = "The report ID you want to replace the screenshot of."] report_id: u64,
+    #[description = "The report ID you want to replace the screenshot of."] report_id: i32,
     #[description = "The screenshot you want replace the old one with. You can upload a file here."]
     screenshot: Attachment,
 ) -> anyhow::Result<()> {
@@ -337,23 +364,19 @@ pub async fn replace_screenshot(
 
     assert_user_server!(ctx);
 
-    let old_entry = match BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?
-    {
-        Some(old) => {
-            if old.screenshot_proof.is_none() {
-                ctx.say("This report ID does not have a screenshot proof yet. Please use `/badactor add_screenshot` if you want to provide one for it.").await?;
-                return Ok(());
-            }
-
-            old
-        }
-        None => {
-            ctx.say("There is no entry with this report ID!").await?;
-            return Ok(());
-        }
+    let Some(old_entry) =
+        BadActorModelController::get_by_id(&ctx.data().db_pool, report_id).await?
+    else {
+        ctx.say("There is no entry with this report ID!").await?;
+        return Ok(());
     };
 
-    let old_path = old_entry.screenshot_proof.unwrap();
+    let Some(old_screenshot_path) = old_entry.screenshot_proof else {
+        ctx.say("This report ID does not have a screenshot proof yet. Please use `/badactor add_screenshot` if you want to provide one for it.").await?;
+        return Ok(());
+    };
+
+    screenshot::FileManager::delete(&old_screenshot_path).await?;
 
     let new_path = match screenshot::FileManager::save(screenshot, old_entry.user_id).await {
         Ok(path) => path,
@@ -365,8 +388,6 @@ pub async fn replace_screenshot(
             return Ok(());
         }
     };
-
-    screenshot::FileManager::delete(&old_path).await?;
 
     let updated = BadActorModelController::update_screenshot(
         &ctx.data().db_pool,
@@ -396,7 +417,7 @@ pub async fn replace_screenshot(
         broadcast_type: broadcast_handler::BroadcastType::ReplaceScreenshot,
         config: &ctx.data().config,
         db_pool: &ctx.data().db_pool,
-        origin_guild: &Some(interaction_guild),
+        origin_guild: Some(interaction_guild),
         origin_guild_id,
         reporting_bot_id: ctx.framework().bot_id,
     };
@@ -411,10 +432,11 @@ pub async fn replace_screenshot(
     Ok(())
 }
 
+/// Update the explanation of a bad actor entry by its report ID.
 #[poise::command(slash_command, guild_only = true)]
 pub async fn update_explanation(
     ctx: AppContext<'_>,
-    #[description = "The report ID you want to replace the screenshot of."] report_id: u64,
+    #[description = "The report ID you want to replace the screenshot of."] report_id: i32,
     #[description = "The updated explanation you want to provide for the report."]
     explanation: String,
 ) -> anyhow::Result<()> {
@@ -456,7 +478,7 @@ pub async fn update_explanation(
         broadcast_type: broadcast_handler::BroadcastType::UpdateExplanation,
         config: &ctx.data().config,
         db_pool: &ctx.data().db_pool,
-        origin_guild: &Some(interaction_guild),
+        origin_guild: Some(interaction_guild),
         origin_guild_id,
         reporting_bot_id: ctx.framework().bot_id,
     };
@@ -480,19 +502,51 @@ async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
         actor_type,
         explanation,
         interaction_guild,
+        reply_handle,
     } = options;
 
     if collector.data.custom_id.as_str() == "cancel" {
-        return respond_outcome(ctx, target_user, collector, ReportOutcome::Cancel).await;
+        let response = CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content(format!(
+                    "Cancelled reporting user {}!",
+                    format::fdisplay(target_user)
+                ))
+                .components(vec![]),
+        );
+
+        reply_handle
+            .edit(ctx, CreateReply::default().components(vec![]))
+            .await?;
+        collector.create_response(ctx, response).await?;
+        return Ok(());
     }
 
     if collector.data.custom_id.as_str() == "confirm" {
-        respond_outcome(ctx, target_user, collector, ReportOutcome::Confirm).await?;
+        let initial_response = CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content(format!(
+                    "Reporting user {} to the community and taking action...",
+                    format::fdisplay(target_user)
+                ))
+                .components(vec![]),
+        );
+
+        reply_handle
+            .edit(ctx, CreateReply::default().components(vec![]))
+            .await?;
+        collector.create_response(ctx, initial_response).await?;
 
         let maybe_file_name = if let Some(screenshot) = screenshot {
             Some(save_screenshot(ctx, collector, screenshot, target_user).await?)
         } else {
             None
+        };
+
+        let actor_type = match actor_type {
+            BadActorTypeChoice::Bigotry => BadActorType::Bigotry,
+            BadActorTypeChoice::Impersonation => BadActorType::Impersonation,
+            BadActorTypeChoice::Spam => BadActorType::Spam,
         };
 
         let options = CreateBadActorOptions {
@@ -529,13 +583,19 @@ async fn handle_collector(options: CollectorOptions<'_>) -> anyhow::Result<()> {
             broadcast_type: broadcast_handler::BroadcastType::Report,
             config: &ctx.data().config,
             db_pool: &ctx.data().db_pool,
-            origin_guild: &Some(interaction_guild),
+            origin_guild: Some(interaction_guild),
             origin_guild_id,
             reporting_bot_id: ctx.framework().bot_id,
         };
 
         broadcast_handler::broadcast(&ctx, broadcast_options).await;
-        return respond_outcome(ctx, target_user, collector, ReportOutcome::Success).await;
+
+        let response = EditInteractionResponse::new().content(format!(
+            "Successfully reported {} to the community!",
+            format::fdisplay(target_user)
+        ));
+
+        collector.edit_response(ctx, response).await?;
     }
 
     Ok(())
@@ -575,38 +635,6 @@ async fn get_component_collector(ctx: AppContext<'_>) -> Option<ComponentInterac
         .filter(move |c| {
             c.data.custom_id.as_str() == "confirm" || c.data.custom_id.as_str() == "cancel"
         })
-}
-
-async fn respond_outcome(
-    ctx: AppContext<'_>,
-    target_user: &User,
-    collector: &ComponentInteraction,
-    outcome: ReportOutcome,
-) -> anyhow::Result<()> {
-    let message = match outcome {
-        ReportOutcome::Cancel => format!(
-            "Cancelled reporting user {}!",
-            format::fdisplay(target_user)
-        ),
-        ReportOutcome::Confirm => format!(
-            "Reporting user {} to the community and taking action...",
-            format::fdisplay(target_user)
-        ),
-        ReportOutcome::Success => format!(
-            "Successfully reported {} to the community!",
-            format::fdisplay(target_user)
-        ),
-    };
-
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
-            .content(message)
-            .components(vec![]),
-    );
-
-    collector.create_response(&ctx, response).await?;
-
-    Ok(())
 }
 
 async fn save_screenshot(
@@ -673,7 +701,11 @@ async fn save_bad_actor(
 
 /// Returns the [CreateReply] built from the vector of [BadActor]s.
 /// This checks for empty vectors or more than 10 embeds and returns error messages if those conditions are violated.
-async fn construct_embeds_message(ctx: AppContext<'_>, bad_actors: Vec<BadActor>) -> CreateReply {
+async fn construct_embeds_message(
+    ctx: AppContext<'_>,
+    bad_actors: Vec<BadActor>,
+    colour: EmbedColor,
+) -> CreateReply {
     if bad_actors.is_empty() {
         return CreateReply::default().content("There are no bad actor entries to display!");
     }
@@ -687,12 +719,12 @@ async fn construct_embeds_message(ctx: AppContext<'_>, bad_actors: Vec<BadActor>
 
         let embed_options = BroadcastEmbedOptions {
             bot_id: ctx.framework().bot_id,
-            origin_guild: &guild,
+            origin_guild: guild,
             origin_guild_id: b.origin_guild_id,
             report_author: ctx.author(),
         };
 
-        b.to_broadcast_embed(ctx, embed_options).await
+        b.to_broadcast_embed(ctx, embed_options, colour).await
     });
 
     let joined = future::join_all(iter).await;

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{User, UserId};
 use sqlx::{FromRow, PgPool};
@@ -11,7 +11,7 @@ use crate::AppContext;
 #[derive(Debug, FromRow, Clone)]
 struct DbAdmin {
     user_id: String,
-    created_at: DateTime<Utc>,
+    created_at: NaiveDateTime,
 }
 
 #[derive(Debug)]
@@ -35,7 +35,7 @@ impl TryFrom<DbAdmin> for Admin {
     fn try_from(db_admin: DbAdmin) -> Result<Self, Self::Error> {
         Ok(Admin {
             user_id: UserId::from_str(&db_admin.user_id)?,
-            created_at: db_admin.created_at,
+            created_at: db_admin.created_at.and_utc(),
         })
     }
 }

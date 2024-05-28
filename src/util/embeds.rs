@@ -4,7 +4,7 @@ use serenity::{Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, User};
 use crate::util::random_utils;
 use crate::AppContext;
 
-#[derive(Default, poise::ChoiceParameter)]
+#[derive(Default, Copy, Clone, poise::ChoiceParameter)]
 pub enum EmbedColor {
     #[default]
     Kiwi = 0x35AA78,

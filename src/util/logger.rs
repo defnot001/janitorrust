@@ -34,7 +34,7 @@ impl Logger {
 
     pub async fn warn(&self, cache_http: impl CacheHttp, msg: impl AsRef<str>) {
         let msg = sanitize_msg(msg.as_ref());
-        tracing::warn!(msg);
+        tracing::warn!("{msg}");
 
         let embed = Self::log_embed::<i32>(msg, LogLevel::Warn, None).await;
 

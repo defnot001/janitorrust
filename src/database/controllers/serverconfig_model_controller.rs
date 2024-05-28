@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
 use serenity::{
@@ -36,10 +36,10 @@ impl std::fmt::Display for ActionLevel {
     }
 }
 
-impl TryFrom<i8> for ActionLevel {
+impl TryFrom<i32> for ActionLevel {
     type Error = anyhow::Error;
 
-    fn try_from(value: i8) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Notify),
             1 => Ok(Self::Timeout),
@@ -60,13 +60,13 @@ struct DbServerConfig {
     ping_users: bool,
     ping_role: Option<String>,
     honeypot_channel_id: Option<String>,
-    spam_action_level: i8,
-    impersonation_action_level: i8,
-    bigotry_action_level: i8,
-    honeypot_action_level: i8,
+    spam_action_level: i32,
+    impersonation_action_level: i32,
+    bigotry_action_level: i32,
+    honeypot_action_level: i32,
     ignored_roles: Vec<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +121,9 @@ impl TryFrom<DbServerConfig> for ServerConfig {
         let impersonation_action_level = ActionLevel::try_from(impersonation_action_level)?;
         let bigotry_action_level = ActionLevel::try_from(bigotry_action_level)?;
         let honeypot_action_level = ActionLevel::try_from(honeypot_action_level)?;
+
+        let created_at = created_at.and_utc();
+        let updated_at = updated_at.and_utc();
 
         Ok(ServerConfig {
             guild_id,
@@ -189,6 +192,12 @@ impl ServerConfigComplete {
             .map(|c| c.mention().to_string())
             .unwrap_or(String::from("Not set."));
 
+        let honeypot_channel = self
+            .server_config
+            .honeypot_channel_id
+            .map(|c| c.mention().to_string())
+            .unwrap_or(String::from("Not set."));
+
         let ping_role = self
             .server_config
             .ping_role
@@ -198,6 +207,7 @@ impl ServerConfigComplete {
         let spam = self.server_config.spam_action_level.to_string();
         let impersonation = self.server_config.impersonation_action_level.to_string();
         let bigotry = self.server_config.bigotry_action_level.to_string();
+        let honeypot = self.server_config.honeypot_action_level.to_string();
 
         let ignored_roles = if self.server_config.ignored_roles.is_empty() {
             String::from("None set.")
@@ -219,10 +229,12 @@ impl ServerConfigComplete {
             .field("Server ID", server_id, false)
             .field("Whitelisted Admins", guild_users, false)
             .field("Log Channel", log_channel, false)
+            .field("Honeypot Channel", honeypot_channel, false)
             .field("Ping Role", ping_role, false)
             .field("Spam Action Level", spam, false)
             .field("Impersonation Action Level", impersonation, false)
             .field("Bigotry Action Level", bigotry, false)
+            .field("Honeypot Action Level", honeypot, false)
             .field("Ignored Roles", ignored_roles, false)
             .field("Created At", created_at, false)
             .field("Updated At", updated_at, false)
@@ -236,6 +248,7 @@ pub struct UpdateServerConfig {
     pub spam_action_level: Option<ActionLevel>,
     pub impersonation_action_level: Option<ActionLevel>,
     pub bigotry_action_level: Option<ActionLevel>,
+    pub honeypot_action_level: Option<ActionLevel>,
     pub ignored_roles: Option<Vec<RoleId>>,
 }
 
@@ -303,7 +316,6 @@ impl ServerConfigModelController {
     pub async fn update(
         pg_pool: &PgPool,
         guild_id: GuildId,
-        honeypot_channels: &HoneypotChannels,
         update: UpdateServerConfig,
     ) -> anyhow::Result<ServerConfig> {
         let previous = sqlx::query_as::<_, DbServerConfig>(
@@ -313,11 +325,9 @@ impl ServerConfigModelController {
         .fetch_optional(pg_pool)
         .await?;
 
-        if previous.is_none() {
+        let Some(previous) = previous else {
             return Err(anyhow::anyhow!("Server config does not exist"));
-        }
-
-        let previous = previous.unwrap();
+        };
 
         let log_channel_id_str = update
             .log_channel_id
@@ -333,18 +343,23 @@ impl ServerConfigModelController {
 
         let spam_action_level = update
             .spam_action_level
-            .map(|level| level as i8)
+            .map(|level| level as i32)
             .unwrap_or(previous.spam_action_level);
 
         let impersonation_action_level = update
             .impersonation_action_level
-            .map(|level| level as i8)
+            .map(|level| level as i32)
             .unwrap_or(previous.impersonation_action_level);
 
         let bigotry_action_level = update
             .bigotry_action_level
-            .map(|level| level as i8)
+            .map(|level| level as i32)
             .unwrap_or(previous.bigotry_action_level);
+
+        let honeypot_action_level = update
+            .honeypot_action_level
+            .map(|level| level as i32)
+            .unwrap_or(previous.honeypot_action_level);
 
         let ignored_roles = update
             .ignored_roles
@@ -364,7 +379,8 @@ impl ServerConfigModelController {
                 spam_action_level = $5,
                 impersonation_action_level = $6,
                 bigotry_action_level = $7,
-                ignored_roles = $8,
+                honeypot_action_level = $8,
+                ignored_roles = $9,
                 updated_at = now()
             WHERE guild_id = $1
             RETURNING *;
@@ -377,6 +393,7 @@ impl ServerConfigModelController {
         .bind(spam_action_level)
         .bind(impersonation_action_level)
         .bind(bigotry_action_level)
+        .bind(honeypot_action_level)
         .bind(&ignored_roles)
         .fetch_one(pg_pool)
         .await
@@ -384,8 +401,8 @@ impl ServerConfigModelController {
             "Failed to update server config for guild {guild_id}"
         ))?;
 
-        populate_honeypot_channels(honeypot_channels, pg_pool).await;
-        tracing::info!("Repopulated honeypot channels");
+        // populate_honeypot_channels(honeypot_channels, pg_pool).await;
+        // tracing::info!("Repopulated honeypot channels");
 
         db_config.try_into()
     }
@@ -419,5 +436,40 @@ impl ServerConfigModelController {
         tracing::info!("Repopulated honeypot channels");
 
         Ok(deleted)
+    }
+
+    pub async fn add_honeypot_channel(
+        pg_pool: &PgPool,
+        channel_id: ChannelId,
+        guild_id: GuildId,
+        honeypot_channels: &HoneypotChannels,
+    ) -> anyhow::Result<()> {
+        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = $1 WHERE guild_id = $2;")
+            .bind(channel_id.to_string())
+            .bind(guild_id.to_string())
+            .execute(pg_pool)
+            .await?;
+
+        populate_honeypot_channels(honeypot_channels, pg_pool).await;
+        tracing::info!("Repopulated honeypot channels");
+
+        Ok(())
+    }
+
+    pub async fn remove_honeypot_channel(
+        pg_pool: &PgPool,
+        guild_id: GuildId,
+        honeypot_channels: &HoneypotChannels,
+    ) -> anyhow::Result<()> {
+        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = NULL WHERE guild_id = $1;")
+            .bind(guild_id.to_string())
+            .execute(pg_pool)
+            .await
+            .context("Failed set honeypot channel id to null in the database")?;
+
+        populate_honeypot_channels(honeypot_channels, pg_pool).await;
+        tracing::info!("Repopulated honeypot channels");
+
+        Ok(())
     }
 }

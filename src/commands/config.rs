@@ -5,6 +5,7 @@ use serenity::{ChannelType, GuildChannel, Role};
 use crate::database::controllers::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
+use crate::util::logger::Logger;
 use crate::util::random_utils;
 use crate::AppContext;
 use crate::{assert_user_server, oops};
@@ -13,7 +14,7 @@ use crate::{assert_user_server, oops};
 #[poise::command(
     slash_command,
     guild_only = true,
-    subcommands("display", "update"),
+    subcommands("display", "update", "enable_honeypot", "disable_honeypot"),
     subcommand_required
 )]
 pub async fn config(_: AppContext<'_>) -> anyhow::Result<()> {
@@ -23,9 +24,10 @@ pub async fn config(_: AppContext<'_>) -> anyhow::Result<()> {
 /// Display your own serverconfig.
 #[poise::command(slash_command, guild_only = true)]
 async fn display(ctx: AppContext<'_>) -> anyhow::Result<()> {
-    assert_user_server!(ctx);
     ctx.defer().await?;
+    assert_user_server!(ctx);
 
+    // SAFETY: assert_user_server!() returns if guild_id is None
     let guild_id = ctx.guild_id().unwrap();
 
     let Some(config) =
@@ -58,12 +60,15 @@ async fn update(
     impersonation_action_level: Option<ActionLevel>,
     #[description = "The level of action to take for users with bigot behaviour."]
     bigotry_action_level: Option<ActionLevel>,
+    #[description = "The level of action to take for users reported through honeypots."]
+    honeypot_action_level: Option<ActionLevel>,
     #[description = "Role IDs to ignore when taking action. Separate multiple with a comma (,)."]
     ignored_roles: Option<String>,
 ) -> anyhow::Result<()> {
-    assert_user_server!(ctx);
     ctx.defer().await?;
+    assert_user_server!(ctx);
 
+    // SAFETY: assert_user_server!() returns if guild_id is None
     let guild_id = ctx.guild_id().unwrap();
 
     if let Some(c) = &log_channel {
@@ -90,16 +95,12 @@ async fn update(
         spam_action_level,
         impersonation_action_level,
         bigotry_action_level,
+        honeypot_action_level,
         ignored_roles,
     };
 
-    let updated = ServerConfigModelController::update(
-        &ctx.data().db_pool,
-        guild_id,
-        &ctx.data().honeypot_channels,
-        update_values,
-    )
-    .await?;
+    let updated =
+        ServerConfigModelController::update(&ctx.data().db_pool, guild_id, update_values).await?;
 
     let embed = ServerConfigComplete::try_from_server_config(updated, &ctx.data().db_pool, &ctx)
         .await?
@@ -110,5 +111,69 @@ async fn update(
         .content("Successfully updated your server config.");
 
     ctx.send(reply).await?;
+    Ok(())
+}
+
+/// Use this command in the channel you want the honeypot to be.
+#[poise::command(slash_command, guild_only = true)]
+async fn enable_honeypot(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    ctx.defer_ephemeral().await?;
+    assert_user_server!(ctx);
+
+    let Some(channel) = ctx.guild_channel().await else {
+        ctx.say("You somehow managed to use this command outside of a channel!")
+            .await?;
+        return Ok(());
+    };
+
+    if let Err(e) = ServerConfigModelController::add_honeypot_channel(
+        &ctx.data().db_pool,
+        channel.id,
+        channel.guild_id,
+        &ctx.data().honeypot_channels,
+    )
+    .await
+    {
+        let log_msg = format!("Failed to add channel {}", channel.id);
+        Logger::get().error(ctx, e, log_msg).await;
+
+        ctx.say("Failed to add honeypot channel to the database")
+            .await?;
+        return Ok(());
+    }
+
+    let message = format!(
+        "Successfully added channel {} (`{}`) to your config.",
+        channel.name, channel.id
+    );
+
+    ctx.say(message).await?;
+    Ok(())
+}
+
+/// Disable the honeypot feature for your servers.
+#[poise::command(slash_command, guild_only = true)]
+async fn disable_honeypot(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_user_server!(ctx);
+
+    if let Err(e) = ServerConfigModelController::remove_honeypot_channel(
+        &ctx.data().db_pool,
+        // SAFETY: assert_user_server!() returns if guild_id is None
+        ctx.guild_id().unwrap(),
+        &ctx.data().honeypot_channels,
+    )
+    .await
+    {
+        let log_msg = "Failed to remove honeypot channel from the `server_configs` table";
+        Logger::get().error(ctx, e, log_msg).await;
+
+        ctx.say("Failed to add honeypot channel to the database")
+            .await?;
+        return Ok(());
+    }
+
+    ctx.say("Successfully removed honeypot channel from your config.")
+        .await?;
     Ok(())
 }

@@ -2,12 +2,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use poise::{serenity_prelude as serenity, FrameworkContext};
-use serenity::{Context, GuildId, Message, UserId};
+use serenity::{CacheHttp, Context, GuildId, Message, PartialGuild, User, UserId};
+use sqlx::PgPool;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::broadcast::broadcast_handler::{broadcast, BroadcastOptions, BroadcastType};
 use crate::database::controllers::badactor_model_controller::{
-    BadActorModelController, BadActorType, CreateBadActorOptions,
+    BadActor, BadActorModelController, BadActorType, CreateBadActorOptions,
 };
 use crate::util::format;
 use crate::util::logger::Logger;
@@ -74,6 +75,10 @@ pub async fn handle_message(
     drop(queue);
 
     if should_report {
+        if has_active_case(ctx, &framework.user_data.db_pool, &msg.author).await {
+            return;
+        }
+
         let bad_actor_options = CreateBadActorOptions {
             user_id: msg.author.id,
             actor_type: BadActorType::Honeypot,
@@ -83,28 +88,25 @@ pub async fn handle_message(
             updated_by_user_id: framework.bot_id,
         };
 
-        let bad_actor =
-            match BadActorModelController::create(&framework.user_data.db_pool, bad_actor_options)
-                .await
-            {
-                Ok(bad_actor) => bad_actor,
-                Err(e) => {
-                    let log_msg = format!(
-                        "Failed to add bad actor {} into the database after honeypot triggered.",
-                        msg.author.id
-                    );
-                    Logger::get().error(&ctx, e, log_msg).await;
-                    return;
-                }
-            };
+        let bad_actor_future = save_bad_actor(
+            ctx,
+            &framework.user_data.db_pool,
+            &msg.author,
+            bad_actor_options,
+        );
 
-        let bot_user = match framework.bot_id.to_user(&ctx).await {
-            Ok(bot_user) => bot_user,
-            Err(e) => {
-                let log_msg = "Failed to get bot user from the API";
-                Logger::get().error(ctx, e, log_msg).await;
-                return;
-            }
+        let bot_user_future = get_bot_user(ctx, framework.bot_id);
+        let origin_guild_future = get_origin_guild(ctx, guild_id);
+
+        let (bad_actor, bot_user, origin_guild) =
+            tokio::join!(bad_actor_future, bot_user_future, origin_guild_future);
+
+        let Ok(bot_user) = bot_user else {
+            return;
+        };
+
+        let Ok(bad_actor) = bad_actor else {
+            return;
         };
 
         let broadcast_options = BroadcastOptions {
@@ -114,7 +116,7 @@ pub async fn handle_message(
             reporting_bot_id: bot_user.id,
             bad_actor: &bad_actor,
             bad_actor_user: &msg.author,
-            origin_guild: &None,
+            origin_guild,
             origin_guild_id: guild_id,
             broadcast_type: BroadcastType::Honeypot,
         };
@@ -146,4 +148,62 @@ fn should_report(queue: &MutexGuard<'_, Vec<HoneypotMessage>>, new_msg: &Honeypo
     }
 
     equal_msg_content >= 2 && is_any_in_honeypot
+}
+
+async fn has_active_case(cache_http: impl CacheHttp, db_pool: &PgPool, target_user: &User) -> bool {
+    if BadActorModelController::has_active_case(db_pool, target_user.id).await {
+        let msg = format!(
+            "User {} reached into a honeypot but already has an active case. Skipping report.",
+            format::display(target_user)
+        );
+        Logger::get().warn(cache_http, msg).await;
+
+        return true;
+    }
+
+    false
+}
+
+async fn save_bad_actor(
+    cache_http: impl CacheHttp,
+    db_pool: &PgPool,
+    target_user: &User,
+    options: CreateBadActorOptions,
+) -> anyhow::Result<BadActor> {
+    match BadActorModelController::create(db_pool, options).await {
+        Ok(bad_actor) => Ok(bad_actor),
+        Err(e) => {
+            let log_msg = format!(
+                "Failed to add bad actor {} into the database after honeypot triggered.",
+                format::display(target_user)
+            );
+            Logger::get().error(cache_http, &e, log_msg).await;
+            return Err(e);
+        }
+    }
+}
+
+async fn get_bot_user(cache_http: impl CacheHttp, bot_id: UserId) -> anyhow::Result<User> {
+    match bot_id.to_user(&cache_http).await {
+        Ok(bot_user) => Ok(bot_user),
+        Err(e) => {
+            let log_msg = format!("Failed to get bot user from ID {bot_id}",);
+            Logger::get().error(&cache_http, &e, log_msg).await;
+            return Err(anyhow::Error::from(e));
+        }
+    }
+}
+
+async fn get_origin_guild(
+    cache_http: impl CacheHttp,
+    origin_guild_id: GuildId,
+) -> Option<PartialGuild> {
+    match origin_guild_id.to_partial_guild(&cache_http).await {
+        Ok(guild) => Some(guild),
+        Err(e) => {
+            let log_msg = format!("Failed to get guild from ID {origin_guild_id}",);
+            Logger::get().error(&cache_http, &e, log_msg).await;
+            None
+        }
+    }
 }

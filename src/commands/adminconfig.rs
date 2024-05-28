@@ -60,7 +60,7 @@ async fn display_configs(
 #[poise::command(slash_command)]
 async fn delete_bad_actor(
     ctx: AppContext<'_>,
-    #[description = "The entry id that you want to delete."] entry: u64,
+    #[description = "The entry id that you want to delete."] entry: i32,
 ) -> anyhow::Result<()> {
     assert_admin!(ctx);
     assert_admin_server!(ctx);

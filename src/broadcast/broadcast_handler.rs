@@ -5,6 +5,7 @@ use serenity::{
 use sqlx::PgPool;
 
 use crate::database::controllers::badactor_model_controller::{BadActor, BroadcastEmbedOptions};
+use crate::util::embeds::EmbedColor;
 use crate::util::{config, format, logger};
 
 use super::listener::BroadcastListener;
@@ -34,6 +35,13 @@ impl BroadcastType {
             Self::Honeypot => "A bad actor was caught by the honeypot.",
         }
     }
+
+    pub fn is_new_report(&self) -> bool {
+        match self {
+            Self::Report | Self::Honeypot => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -44,7 +52,7 @@ pub struct BroadcastOptions<'a> {
     pub reporting_bot_id: UserId,
     pub bad_actor: &'a BadActor,
     pub bad_actor_user: &'a User,
-    pub origin_guild: &'a Option<PartialGuild>,
+    pub origin_guild: Option<PartialGuild>,
     pub origin_guild_id: GuildId,
     pub broadcast_type: BroadcastType,
 }
@@ -88,8 +96,10 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
         bot_id: reporting_bot_id,
     };
 
+    let embed_colour = get_embed_colour(broadcast_type);
+
     let (embed, attachment) = bad_actor
-        .to_broadcast_embed(&cache_http, embed_options)
+        .to_broadcast_embed(&cache_http, embed_options, embed_colour)
         .await;
 
     let admin_options = admin::BroadcastAdminServerOptions {
@@ -104,9 +114,7 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
         logger::Logger::get().error(&cache_http, e, log_msg).await;
     }
 
-    if broadcast_type == BroadcastType::Report
-        && notify_user(&cache_http, reporting_user).await.is_err()
-    {
+    if broadcast_type.is_new_report() && notify_user(&cache_http, bad_actor_user).await.is_err() {
         let log_msg = format!(
             "Failed to inform {} about the moderation actions in DM",
             format::display(reporting_user)
@@ -190,17 +198,22 @@ pub fn get_broadcast_message(
 }
 
 async fn notify_user(cache_http: impl CacheHttp, target_user: &User) -> anyhow::Result<()> {
-    let content = r#"
-        It appears your account has been compromised and used as a spam bot.
-        As part of a collaborative effort to more efficiently moderate TMC servers, the actions as listed in the embed have been taken against your account.
-        Since not all guilds have automatic moderation, it's possible that you have been banned from more servers than listed.
-        If you have now recovered your account, please join this server (https://discord.gg/7tp82FGk3n).
-        Follow the instructions there to clear your name and remove the bans on your account.
-        "#;
+    let content = "It appears your account has been compromised and used as a spam bot.\n\nAs part of a collaborative effort to more efficiently moderate TMC servers, the actions as listed in the embed have been taken against your account.\nSince not all guilds have automatic moderation, it's possible that you have been banned from more servers than listed.\n\nIf you have now recovered your account, please join this server (https://discord.gg/7tp82FGk3n).\nFollow the instructions there to clear your name and remove the bans on your account.";
 
     target_user
         .direct_message(cache_http, CreateMessage::new().content(content))
         .await?;
 
     Ok(())
+}
+
+fn get_embed_colour(broadcast_type: BroadcastType) -> EmbedColor {
+    match broadcast_type {
+        BroadcastType::AddScreenshot => EmbedColor::Yellow,
+        BroadcastType::Deactivate => EmbedColor::Green,
+        BroadcastType::Honeypot => EmbedColor::DeepPink,
+        BroadcastType::Report => EmbedColor::Red,
+        BroadcastType::ReplaceScreenshot => EmbedColor::Orange,
+        BroadcastType::UpdateExplanation => EmbedColor::Orange,
+    }
 }

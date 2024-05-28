@@ -1,8 +1,7 @@
 use std::fmt::Display;
 use std::str::FromStr;
 
-use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use poise::serenity_prelude as serenity;
 use serenity::{
     CacheHttp, CreateAttachment, CreateEmbed, CreateEmbedFooter, GuildId, Mentionable,
@@ -10,10 +9,11 @@ use serenity::{
 };
 use sqlx::{FromRow, PgPool};
 
+use crate::util::embeds::EmbedColor;
 use crate::util::{format, random_utils, screenshot};
 use crate::Logger;
 
-#[derive(Debug, Copy, Clone, poise::ChoiceParameter)]
+#[derive(Debug, Copy, Clone)]
 pub enum BadActorType {
     Spam,
     Impersonation,
@@ -46,23 +46,30 @@ impl FromStr for BadActorType {
     }
 }
 
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum BadActorTypeChoice {
+    Spam,
+    Impersonation,
+    Bigotry,
+}
+
 #[derive(Debug, FromRow)]
 struct DbBadActor {
-    id: i64,
+    id: i32,
     user_id: String,
     is_active: bool,
     actor_type: String,
     origin_guild_id: String,
     screenshot_proof: Option<String>,
     explanation: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
     updated_by_user_id: String,
 }
 
 #[derive(Debug)]
 pub struct BadActor {
-    pub id: i64,
+    pub id: i32,
     pub user_id: UserId,
     pub is_active: bool,
     pub actor_type: BadActorType,
@@ -77,7 +84,7 @@ pub struct BadActor {
 #[derive(Debug)]
 pub struct BroadcastEmbedOptions<'a> {
     pub origin_guild_id: GuildId,
-    pub origin_guild: &'a Option<PartialGuild>,
+    pub origin_guild: Option<PartialGuild>,
     pub report_author: &'a User,
     pub bot_id: UserId,
 }
@@ -92,6 +99,7 @@ impl BadActor {
         &self,
         cache_http: impl CacheHttp,
         options: BroadcastEmbedOptions<'a>,
+        colour: EmbedColor,
     ) -> (CreateEmbed, Option<CreateAttachment>) {
         let BroadcastEmbedOptions {
             origin_guild_id,
@@ -127,6 +135,7 @@ impl BadActor {
 
         let embed = CreateEmbed::default()
             .title(title)
+            .color(colour)
             .timestamp(Utc::now())
             .field("Report ID", self.id.to_string(), true)
             .field("Active", random_utils::display_bool(self.is_active), true)
@@ -197,13 +206,13 @@ impl TryFrom<DbBadActor> for BadActor {
             ..
         } = db_bad_actor;
 
-        let context = "Failed to convert [DbBadActor] to [BadActor].";
+        let actor_type = BadActorType::from_str(&db_bad_actor.actor_type)?;
+        let user_id = UserId::from_str(&db_bad_actor.user_id)?;
+        let origin_guild_id = GuildId::from_str(&db_bad_actor.origin_guild_id)?;
+        let updated_by_user_id = UserId::from_str(&db_bad_actor.updated_by_user_id)?;
 
-        let actor_type = BadActorType::from_str(&db_bad_actor.actor_type).context(context)?;
-        let user_id = UserId::from_str(&db_bad_actor.user_id).context(context)?;
-        let origin_guild_id = GuildId::from_str(&db_bad_actor.origin_guild_id).context(context)?;
-        let updated_by_user_id =
-            UserId::from_str(&db_bad_actor.updated_by_user_id).context(context)?;
+        let created_at = created_at.and_utc();
+        let updated_at = updated_at.and_utc();
 
         let bad_actor = BadActor {
             id,
@@ -269,8 +278,7 @@ impl BadActorModelController {
         .bind(explanation)
         .bind(updated_by_user_id.to_string())
         .fetch_one(db_pool)
-        .await
-        .context(format!("Failed to create bad actor entry for user {user_id} in the `bad_actors` table"))?
+        .await?
         .try_into()
     }
 
@@ -295,10 +303,7 @@ impl BadActorModelController {
             sqlx::query_as::<_, DbBadActor>("SELECT * FROM bad_actors WHERE user_id = $1;")
                 .bind(user_id.to_string())
                 .fetch_all(db_pool)
-                .await
-                .context(format!(
-                    "Failed to get all rows for user {user_id} from the `bad_actors` table"
-                ))?;
+                .await?;
 
         db_bad_actors
             .into_iter()
@@ -307,15 +312,12 @@ impl BadActorModelController {
     }
 
     /// Get a specific bad actor entry by its unique ID.
-    pub async fn get_by_id(db_pool: &PgPool, id: u64) -> anyhow::Result<Option<BadActor>> {
+    pub async fn get_by_id(db_pool: &PgPool, id: i32) -> anyhow::Result<Option<BadActor>> {
         let db_bad_actor =
             sqlx::query_as::<_, DbBadActor>("SELECT * FROM bad_actors WHERE id = $1;")
-                .bind(id as i64)
+                .bind(id)
                 .fetch_optional(db_pool)
-                .await
-                .context(format!(
-                    "Failed to get row with ID {id} from the `bad_actors` table"
-                ))?;
+                .await?;
 
         db_bad_actor.map(BadActor::try_from).transpose()
     }
@@ -324,7 +326,7 @@ impl BadActorModelController {
     /// This also updates the `updated_by_user_id` field to the user ID of the user who deactivated the entry.
     pub async fn deavtivate(
         db_pool: &PgPool,
-        id: u64,
+        id: i32,
         explanation: impl Into<String>,
         updated_by_user_id: UserId,
     ) -> anyhow::Result<BadActor> {
@@ -340,12 +342,11 @@ impl BadActorModelController {
             RETURNING *;
             "#,
         )
-        .bind(id as i64)
+        .bind(id)
         .bind(explanation.into())
         .bind(updated_by_user_id.to_string())
         .fetch_one(db_pool)
-        .await
-        .context(format!("Failed to deactivate bad actor entry with ID {id}"))?;
+        .await?;
 
         updated_db_bad_actor.try_into()
     }
@@ -353,7 +354,7 @@ impl BadActorModelController {
     /// Get the most recent bad actor entries with the given limit and query type. Defaults to `BadActorQueryType::All`.
     pub async fn get_by_type(
         db_pool: &PgPool,
-        limit: u8,
+        limit: i64,
         query_type: Option<BadActorQueryType>,
     ) -> anyhow::Result<Vec<BadActor>> {
         let query_str = match query_type.unwrap_or(BadActorQueryType::All) {
@@ -367,10 +368,9 @@ impl BadActorModelController {
         };
 
         let db_bad_actors = sqlx::query_as::<_, DbBadActor>(query_str)
-            .bind(limit as i8)
+            .bind(limit)
             .fetch_all(db_pool)
-            .await
-            .context("Failed to get most recent entries from the `bad_actors` table")?;
+            .await?;
 
         db_bad_actors
             .into_iter()
@@ -378,15 +378,12 @@ impl BadActorModelController {
             .collect::<Result<Vec<BadActor>, _>>()
     }
 
-    pub async fn delete(pg_pool: &PgPool, id: u64) -> anyhow::Result<BadActor> {
+    pub async fn delete(pg_pool: &PgPool, id: i32) -> anyhow::Result<BadActor> {
         let deleted_db_bad_actor =
             sqlx::query_as::<_, DbBadActor>("DELETE FROM bad_actors WHERE id = $1 RETURNING *;")
-                .bind(id as i64)
+                .bind(id)
                 .fetch_one(pg_pool)
-                .await
-                .context(format!(
-                    "Failed to delete entry with ID {id} from the `bad_actors` table."
-                ))?;
+                .await?;
 
         tracing::info!("Deleted bad actor entry with ID {id} from the database.");
 
@@ -397,7 +394,7 @@ impl BadActorModelController {
     /// This also updates the `last_changed_by` field to the user ID of the user who updated the entry.
     pub async fn update_screenshot(
         pg_pool: &PgPool,
-        id: u64,
+        id: i32,
         updated_by_user_id: UserId,
         screenshot_path: impl Into<String>,
     ) -> anyhow::Result<BadActor> {
@@ -412,21 +409,18 @@ impl BadActorModelController {
             RETURNING *;
             "#,
         )
-        .bind(id as i64)
+        .bind(id)
         .bind(screenshot_path.into())
         .bind(updated_by_user_id.to_string())
         .fetch_one(pg_pool)
-        .await
-        .context(format!(
-            "Failed to update screenshot path for bad actor entry with ID {id}"
-        ))?;
+        .await?;
 
         updated_db_bad_actor.try_into()
     }
 
     pub async fn update_explanation(
         pg_pool: &PgPool,
-        id: u64,
+        id: i32,
         updated_by_user_id: UserId,
         explanation: impl Into<String>,
     ) -> anyhow::Result<BadActor> {
@@ -441,14 +435,11 @@ impl BadActorModelController {
             RETURNING *;
             "#,
         )
-        .bind(id as i64)
+        .bind(id)
         .bind(explanation.into())
         .bind(updated_by_user_id.to_string())
         .fetch_one(pg_pool)
-        .await
-        .context(format!(
-            "Failed to update explanation for bad actor entry with ID {id}"
-        ))?;
+        .await?;
 
         updated_db_bad_actor.try_into()
     }

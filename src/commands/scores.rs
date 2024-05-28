@@ -112,6 +112,11 @@ async fn leaderboard(
         }
     };
 
+    let Some(embed) = embed else {
+        ctx.say("There are no reports to show yet.").await?;
+        return Ok(());
+    };
+
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
 }
@@ -120,7 +125,7 @@ async fn build_user_leaderboard(
     scores: Vec<UserScoreboard>,
     interaction_user: &User,
     ctx: AppContext<'_>,
-) -> anyhow::Result<CreateEmbed> {
+) -> anyhow::Result<Option<CreateEmbed>> {
     let mut leaderboard = Vec::with_capacity(scores.len());
 
     for (i, s) in scores.into_iter().enumerate() {
@@ -139,7 +144,7 @@ async fn build_user_leaderboard(
     }
 
     if leaderboard.is_empty() {
-        anyhow::bail!("Cannot build embed from empty vector");
+        return Ok(None);
     }
 
     let embed = embeds::CreateJanitorEmbed::new(interaction_user)
@@ -147,14 +152,14 @@ async fn build_user_leaderboard(
         .title("Top 10 Users with the most reports")
         .description(leaderboard.join("\n"));
 
-    Ok(embed)
+    Ok(Some(embed))
 }
 
 async fn build_guilds_leaderboard(
     scores: Vec<GuildScoreboard>,
     interaction_user: &User,
     ctx: AppContext<'_>,
-) -> anyhow::Result<CreateEmbed> {
+) -> anyhow::Result<Option<CreateEmbed>> {
     let mut leaderboard = Vec::with_capacity(scores.len());
 
     for (i, s) in scores.into_iter().enumerate() {
@@ -168,7 +173,7 @@ async fn build_guilds_leaderboard(
     }
 
     if leaderboard.is_empty() {
-        anyhow::bail!("Cannot build embed from empty vector");
+        return Ok(None);
     }
 
     let embed = embeds::CreateJanitorEmbed::new(interaction_user)
@@ -176,5 +181,5 @@ async fn build_guilds_leaderboard(
         .title("Top 10 Guilds with the most reports")
         .description(leaderboard.join("\n"));
 
-    Ok(embed)
+    Ok(Some(embed))
 }
