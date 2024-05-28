@@ -59,12 +59,12 @@ struct DbBadActor {
     user_id: String,
     is_active: bool,
     actor_type: String,
-    origin_guild_id: String,
+    originally_created_in: String,
     screenshot_proof: Option<String>,
     explanation: Option<String>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
-    updated_by_user_id: String,
+    last_changed_by: String,
 }
 
 #[derive(Debug)]
@@ -208,8 +208,8 @@ impl TryFrom<DbBadActor> for BadActor {
 
         let actor_type = BadActorType::from_str(&db_bad_actor.actor_type)?;
         let user_id = UserId::from_str(&db_bad_actor.user_id)?;
-        let origin_guild_id = GuildId::from_str(&db_bad_actor.origin_guild_id)?;
-        let updated_by_user_id = UserId::from_str(&db_bad_actor.updated_by_user_id)?;
+        let origin_guild_id = GuildId::from_str(&db_bad_actor.originally_created_in)?;
+        let updated_by_user_id = UserId::from_str(&db_bad_actor.last_changed_by)?;
 
         let created_at = created_at.and_utc();
         let updated_at = updated_at.and_utc();
@@ -266,7 +266,7 @@ impl BadActorModelController {
 
         sqlx::query_as::<_, DbBadActor>(
             r#"
-            INSERT INTO bad_actors (user_id, actor_type, origin_guild_id, screenshot_proof, explanation, updated_by_user_id)
+            INSERT INTO bad_actors (user_id, actor_type, originally_created_in, screenshot_proof, explanation, last_changed_by)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *;
             "#,
@@ -336,7 +336,7 @@ impl BadActorModelController {
             SET
                 is_active = false,
                 explanation = $2,
-                updated_by_user_id = $3,
+                last_changed_by = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -403,7 +403,7 @@ impl BadActorModelController {
             UPDATE bad_actors
             SET
                 screenshot_proof = $2,
-                updated_by_user_id = $3,
+                last_updated_by = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;
@@ -429,7 +429,7 @@ impl BadActorModelController {
             UPDATE bad_actors
             SET
                 explanation = $2,
-                updated_by_user_id = $3,
+                last_updated_by = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *;

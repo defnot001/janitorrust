@@ -10,7 +10,7 @@ use crate::AppContext;
 
 #[derive(Debug, FromRow, Clone)]
 struct DbAdmin {
-    user_id: String,
+    id: String,
     created_at: NaiveDateTime,
 }
 
@@ -34,7 +34,7 @@ impl TryFrom<DbAdmin> for Admin {
 
     fn try_from(db_admin: DbAdmin) -> Result<Self, Self::Error> {
         Ok(Admin {
-            user_id: UserId::from_str(&db_admin.user_id)?,
+            user_id: UserId::from_str(&db_admin.id)?,
             created_at: db_admin.created_at.and_utc(),
         })
     }
@@ -56,7 +56,7 @@ impl AdminModelController {
     }
 
     pub async fn get(db_pool: &PgPool, id: &UserId) -> anyhow::Result<Option<Admin>> {
-        let db_admin = sqlx::query_as::<_, DbAdmin>("SELECT * FROM admins WHERE user_id = $1;")
+        let db_admin = sqlx::query_as::<_, DbAdmin>("SELECT * FROM admins WHERE id = $1;")
             .bind(id.to_string())
             .fetch_optional(db_pool)
             .await

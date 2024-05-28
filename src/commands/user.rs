@@ -1,4 +1,3 @@
-use anyhow::Context;
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{GuildId, User as SerenityUser, UserId};
@@ -97,14 +96,6 @@ async fn add(
     #[description = "Wether the user can only receive reports or also create them."]
     user_type: UserType,
 ) -> anyhow::Result<()> {
-    let thing = crate::database::controllers::admin_model_controller::AdminModelController::get(
-        &ctx.data().db_pool,
-        &ctx.author().id,
-    )
-    .await;
-
-    println!("{:#?}", thing);
-
     assert_admin!(ctx);
     assert_admin_server!(ctx);
     ctx.defer().await?;
@@ -254,7 +245,7 @@ async fn handle_server_config_updates(
             |&g| ServerConfigModelController::delete_if_needed(db_pool, g, honeypot_channels),
         ));
 
-    tokio::try_join!(add_res, remove_res).context("Failed to handle server config updates")?;
+    tokio::try_join!(add_res, remove_res)?;
 
     Ok(())
 }

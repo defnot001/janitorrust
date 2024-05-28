@@ -7,7 +7,7 @@ use sqlx::{prelude::FromRow, PgPool};
 
 #[derive(Debug, FromRow)]
 struct DbUserScoreboard {
-    user_id: String,
+    discord_id: String,
     score: i32,
 }
 
@@ -21,7 +21,7 @@ impl TryFrom<DbUserScoreboard> for UserScoreboard {
     type Error = anyhow::Error;
 
     fn try_from(db_user_scoreboard: DbUserScoreboard) -> Result<Self, Self::Error> {
-        let user_id = UserId::from_str(&db_user_scoreboard.user_id)?;
+        let user_id = UserId::from_str(&db_user_scoreboard.discord_id)?;
         let score = db_user_scoreboard.score as u32;
 
         Ok(UserScoreboard { user_id, score })
@@ -63,7 +63,7 @@ impl ScoresModelController {
 
         let user_res = sqlx::query(
             r#"
-            INSERT INTO user_scores (user_id, score)
+            INSERT INTO user_scores (discord_id, score)
             VALUES ($1, 1)
             ON CONFLICT (user_id)
             DO UPDATE SET score = user_scores.score + 1;
@@ -86,7 +86,7 @@ impl ScoresModelController {
         .await;
 
         if user_res.is_err() || guild_res.is_err() {
-            sqlx::query("ROLLBACK").execute(db_pool).await?;
+            tx.rollback().await?;
             return Err(anyhow::anyhow!("Failed to create or increase scoreboards"));
         }
 
@@ -145,7 +145,7 @@ impl ScoresModelController {
         user_id: UserId,
     ) -> anyhow::Result<UserScoreboard> {
         let db_score =
-            sqlx::query_as::<_, DbUserScoreboard>("SELECT * FROM user_scores WHERE user_id = $1;")
+            sqlx::query_as::<_, DbUserScoreboard>("SELECT * FROM user_scores WHERE discord_id = $1;")
                 .bind(user_id.to_string())
                 .fetch_optional(db_pool)
                 .await

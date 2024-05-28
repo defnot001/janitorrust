@@ -39,9 +39,9 @@ impl std::fmt::Display for UserType {
 
 #[derive(Debug, FromRow)]
 struct DbUser {
-    user_id: String,
+    id: String,
     user_type: String,
-    guild_ids: Vec<String>,
+    servers: Vec<String>,
     created_at: NaiveDateTime,
 }
 
@@ -81,10 +81,10 @@ impl TryFrom<DbUser> for JanitorUser {
     type Error = anyhow::Error;
 
     fn try_from(db_user: DbUser) -> Result<Self, Self::Error> {
-        let user_id = UserId::from_str(&db_user.user_id)?;
+        let user_id = UserId::from_str(&db_user.id)?;
         let user_type = UserType::from_str(&db_user.user_type)?;
         let guild_ids = db_user
-            .guild_ids
+            .servers
             .into_iter()
             .map(|g| GuildId::from_str(&g).map_err(anyhow::Error::from))
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -102,7 +102,7 @@ pub struct UserModelController;
 
 impl UserModelController {
     pub async fn get(db_pool: &PgPool, user_id: UserId) -> anyhow::Result<Option<JanitorUser>> {
-        let db_user = sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE user_id = $1;")
+        let db_user = sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE id = $1;")
             .bind(user_id.to_string())
             .fetch_optional(db_pool)
             .await
@@ -127,7 +127,7 @@ impl UserModelController {
             .collect::<Vec<String>>();
 
         let db_user = sqlx::query_as::<_, DbUser>(
-            "INSERT INTO users (user_id, user_type, guild_ids) VALUES ($1, $2, $3) RETURNING *;",
+            "INSERT INTO users (id, user_type, servers) VALUES ($1, $2, $3) RETURNING *;",
         )
         .bind(user_id.to_string())
         .bind(user_type.to_string())
@@ -169,7 +169,7 @@ impl UserModelController {
             .collect::<Vec<String>>();
 
         sqlx::query_as::<_, DbUser>(
-            "UPDATE users SET user_type = $2, guild_ids = $3 WHERE user_id = $1 RETURNING *;",
+            "UPDATE users SET user_type = $2, servers = $3 WHERE id = $1 RETURNING *;",
         )
         .bind(user_id.to_string())
         .bind(user_type.to_string())
@@ -183,7 +183,7 @@ impl UserModelController {
     }
 
     pub async fn delete(db_pool: &PgPool, user_id: UserId) -> anyhow::Result<JanitorUser> {
-        sqlx::query_as::<_, DbUser>("DELETE FROM users WHERE user_id = $1 RETURNING *;")
+        sqlx::query_as::<_, DbUser>("DELETE FROM users WHERE id = $1 RETURNING *;")
             .bind(user_id.to_string())
             .fetch_one(db_pool)
             .await
@@ -198,7 +198,7 @@ impl UserModelController {
         guild_id: GuildId,
     ) -> anyhow::Result<Vec<JanitorUser>> {
         let db_users =
-            sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(guild_ids) LIMIT 10;")
+            sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(servers) LIMIT 10;")
                 .bind(guild_id.to_string())
                 .fetch_all(db_pool)
                 .await

@@ -55,8 +55,8 @@ impl TryFrom<i32> for ActionLevel {
 
 #[derive(Debug, FromRow)]
 struct DbServerConfig {
-    guild_id: String,
-    log_channel_id: Option<String>,
+    server_id: String,
+    log_channel: Option<String>,
     ping_users: bool,
     ping_role: Option<String>,
     honeypot_channel_id: Option<String>,
@@ -90,8 +90,8 @@ impl TryFrom<DbServerConfig> for ServerConfig {
 
     fn try_from(db_server_config: DbServerConfig) -> Result<Self, Self::Error> {
         let DbServerConfig {
-            guild_id,
-            log_channel_id,
+            server_id,
+            log_channel,
             ping_users,
             ping_role,
             honeypot_channel_id,
@@ -104,10 +104,8 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             updated_at,
         } = db_server_config;
 
-        let guild_id = GuildId::from_str(&guild_id)?;
-        let log_channel_id = log_channel_id
-            .map(|c| ChannelId::from_str(&c))
-            .transpose()?;
+        let guild_id = GuildId::from_str(&server_id)?;
+        let log_channel_id = log_channel.map(|c| ChannelId::from_str(&c)).transpose()?;
         let honeypot_channel_id = honeypot_channel_id
             .map(|c| ChannelId::from_str(&c))
             .transpose()?;
@@ -261,9 +259,9 @@ impl ServerConfigModelController {
     ) -> anyhow::Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO server_configs (guild_id)
+            INSERT INTO server_configs (server_id)
             VALUES ($1)
-            ON CONFLICT (guild_id) DO NOTHING;
+            ON CONFLICT (server_id) DO NOTHING;
             "#,
         )
         .bind(guild_id.to_string())
@@ -278,7 +276,7 @@ impl ServerConfigModelController {
         pg_pool: &PgPool,
         guild_id: GuildId,
     ) -> anyhow::Result<Option<ServerConfig>> {
-        sqlx::query_as::<_, DbServerConfig>("SELECT * FROM server_configs WHERE guild_id = $1;")
+        sqlx::query_as::<_, DbServerConfig>("SELECT * FROM server_configs WHERE server_id = $1;")
             .bind(guild_id.to_string())
             .fetch_optional(pg_pool)
             .await?
@@ -294,7 +292,7 @@ impl ServerConfigModelController {
         let guild_ids: Vec<String> = guild_ids.iter().map(|id| id.to_string()).collect();
 
         sqlx::query_as::<_, DbServerConfig>(
-            "SELECT * FROM server_configs WHERE guild_id = ANY($1::text[]);",
+            "SELECT * FROM server_configs WHERE server_id = ANY($1::text[]);",
         )
         .bind(&guild_ids)
         .fetch_all(pg_pool)
@@ -319,7 +317,7 @@ impl ServerConfigModelController {
         update: UpdateServerConfig,
     ) -> anyhow::Result<ServerConfig> {
         let previous = sqlx::query_as::<_, DbServerConfig>(
-            "SELECT * FROM server_configs WHERE guild_id = $1;",
+            "SELECT * FROM server_configs WHERE server_id = $1;",
         )
         .bind(guild_id.to_string())
         .fetch_optional(pg_pool)
@@ -332,7 +330,7 @@ impl ServerConfigModelController {
         let log_channel_id_str = update
             .log_channel_id
             .map(|c| Some(c.to_string()))
-            .unwrap_or(previous.log_channel_id);
+            .unwrap_or(previous.log_channel);
 
         let ping_users = update.ping_users.unwrap_or(previous.ping_users);
 
@@ -373,7 +371,7 @@ impl ServerConfigModelController {
         let db_config = sqlx::query_as::<_, DbServerConfig>(
             r#"
             UPDATE server_configs
-            SET log_channel_id = $2,
+            SET log_channel = $2,
                 ping_users = $3,
                 ping_role = $4,
                 spam_action_level = $5,
@@ -382,7 +380,7 @@ impl ServerConfigModelController {
                 honeypot_action_level = $8,
                 ignored_roles = $9,
                 updated_at = now()
-            WHERE guild_id = $1
+            WHERE server_id = $1
             RETURNING *;
             "#,
         )
@@ -414,10 +412,10 @@ impl ServerConfigModelController {
     ) -> anyhow::Result<bool> {
         let sql = r#"
             WITH user_check AS (
-                SELECT EXISTS(SELECT 1 FROM users WHERE $1 = ANY(guild_ids)) AS exists
+                SELECT EXISTS(SELECT 1 FROM users WHERE $1 = ANY(servers)) AS exists
             )
             DELETE FROM server_configs
-                WHERE guild_id = $1
+                WHERE server_id = $1
                     AND
                 (SELECT NOT exists FROM user_check)
             RETURNING TRUE;
@@ -444,7 +442,7 @@ impl ServerConfigModelController {
         guild_id: GuildId,
         honeypot_channels: &HoneypotChannels,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = $1 WHERE guild_id = $2;")
+        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = $1 WHERE server_id = $2;")
             .bind(channel_id.to_string())
             .bind(guild_id.to_string())
             .execute(pg_pool)
@@ -461,7 +459,7 @@ impl ServerConfigModelController {
         guild_id: GuildId,
         honeypot_channels: &HoneypotChannels,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = NULL WHERE guild_id = $1;")
+        sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = NULL WHERE server_id = $1;")
             .bind(guild_id.to_string())
             .execute(pg_pool)
             .await
