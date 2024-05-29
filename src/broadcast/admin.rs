@@ -1,4 +1,3 @@
-use anyhow::Context;
 use poise::serenity_prelude as serenity;
 use serenity::{CacheHttp, CreateAttachment, CreateEmbed};
 
@@ -30,8 +29,7 @@ pub async fn broadcast_admin_server(
     config
         .admin_server_log_channel
         .send_message(&cache_http, message)
-        .await
-        .context("Failed to broadcast to admin server")?;
+        .await?;
 
     Ok(())
 }

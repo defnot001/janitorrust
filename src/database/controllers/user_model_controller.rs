@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use anyhow::Context;
 use chrono::NaiveDateTime;
 use chrono::{DateTime, Utc};
 use poise::serenity_prelude as serenity;
@@ -105,8 +104,7 @@ impl UserModelController {
         let db_user = sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE id = $1;")
             .bind(user_id.to_string())
             .fetch_optional(db_pool)
-            .await
-            .context(format!("Failed to get user {user_id} from the users table"))?;
+            .await?;
 
         db_user.map(JanitorUser::try_from).transpose()
     }
@@ -175,10 +173,7 @@ impl UserModelController {
         .bind(user_type.to_string())
         .bind(guild_ids)
         .fetch_one(db_pool)
-        .await
-        .context(format!(
-            "Failed to update user {user_id} in the `users` table"
-        ))?
+        .await?
         .try_into()
     }
 
@@ -186,10 +181,7 @@ impl UserModelController {
         sqlx::query_as::<_, DbUser>("DELETE FROM users WHERE id = $1 RETURNING *;")
             .bind(user_id.to_string())
             .fetch_one(db_pool)
-            .await
-            .context(format!(
-                "Failed to delete user {user_id} from the `users` table"
-            ))?
+            .await?
             .try_into()
     }
 
@@ -201,8 +193,7 @@ impl UserModelController {
             sqlx::query_as::<_, DbUser>("SELECT * FROM users WHERE $1 = ANY(servers) LIMIT 10;")
                 .bind(guild_id.to_string())
                 .fetch_all(db_pool)
-                .await
-                .context(format!("Failed to get users for guild {guild_id}"))?;
+                .await?;
 
         db_users
             .into_iter()

@@ -46,8 +46,7 @@ impl AdminModelController {
     pub async fn get_all(db_pool: &PgPool) -> anyhow::Result<Vec<Admin>> {
         let db_admins = sqlx::query_as::<_, DbAdmin>("SELECT * FROM admins;")
             .fetch_all(db_pool)
-            .await
-            .context("Failed to get all admins from the `admins` table")?;
+            .await?;
 
         db_admins
             .into_iter()
@@ -59,10 +58,7 @@ impl AdminModelController {
         let db_admin = sqlx::query_as::<_, DbAdmin>("SELECT * FROM admins WHERE id = $1;")
             .bind(id.to_string())
             .fetch_optional(db_pool)
-            .await
-            .context(format!(
-                "Failed to get admin with id {id} from the `admins` table"
-            ))?;
+            .await?;
 
         db_admin.map(Admin::try_from).transpose()
     }

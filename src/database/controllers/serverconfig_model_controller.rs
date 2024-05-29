@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use anyhow::Context;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
@@ -403,13 +402,7 @@ impl ServerConfigModelController {
         .bind(honeypot_action_level)
         .bind(&ignored_roles)
         .fetch_one(pg_pool)
-        .await
-        .context(format!(
-            "Failed to update server config for guild {guild_id}"
-        ))?;
-
-        // populate_honeypot_channels(honeypot_channels, pg_pool).await;
-        // tracing::info!("Repopulated honeypot channels");
+        .await?;
 
         db_config.try_into()
     }
@@ -433,8 +426,7 @@ impl ServerConfigModelController {
         let deleted = sqlx::query_scalar::<_, String>(sql)
             .bind(guild_id.to_string())
             .fetch_optional(pg_pool)
-            .await
-            .context(format!("Failed to check and delete guild {guild_id}"))?
+            .await?
             .is_some();
 
         tracing::info!("Deleted unused server config for guild {guild_id}");
@@ -471,8 +463,7 @@ impl ServerConfigModelController {
         sqlx::query("UPDATE server_configs SET updated_at = now(), honeypot_channel_id = NULL WHERE server_id = $1;")
             .bind(guild_id.to_string())
             .execute(pg_pool)
-            .await
-            .context("Failed set honeypot channel id to null in the database")?;
+            .await?;
 
         populate_honeypot_channels(honeypot_channels, pg_pool).await;
         tracing::info!("Repopulated honeypot channels");

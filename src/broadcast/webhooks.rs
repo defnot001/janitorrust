@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use anyhow::Context;
 use futures::future;
 use poise::serenity_prelude as serenity;
 use serenity::{CacheHttp, CreateAttachment, CreateEmbed, ExecuteWebhook, GuildId, Webhook};
@@ -117,8 +116,7 @@ pub async fn broadcast_to_webhooks(
 async fn get_webhooks_from_db(db_pool: &PgPool) -> anyhow::Result<Vec<BroadcastWebhook>> {
     sqlx::query_as::<_, DbBroadcastWebhook>("SELECT * FROM webhooks;")
         .fetch_all(db_pool)
-        .await
-        .context("Failed to get all broadcast webhooks from the `webhooks` table")?
+        .await?
         .into_iter()
         .map(BroadcastWebhook::try_from)
         .collect::<anyhow::Result<Vec<_>>>()

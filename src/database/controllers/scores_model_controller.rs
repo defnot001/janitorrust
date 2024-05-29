@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use anyhow::Context;
 use poise::serenity_prelude as serenity;
 use serenity::{GuildId, UserId};
 use sqlx::{prelude::FromRow, PgPool};
@@ -65,7 +64,7 @@ impl ScoresModelController {
             r#"
             INSERT INTO user_scores (discord_id, score)
             VALUES ($1, 1)
-            ON CONFLICT (user_id)
+            ON CONFLICT (discord_id)
             DO UPDATE SET score = user_scores.score + 1;
             "#,
         )
@@ -105,10 +104,7 @@ impl ScoresModelController {
         )
         .bind(limit as i16)
         .fetch_all(db_pool)
-        .await
-        .context(format!(
-            "Failed to get top {limit} users from the `user_scores` table"
-        ))?;
+        .await?;
 
         db_top_users
             .into_iter()
@@ -129,10 +125,7 @@ impl ScoresModelController {
         )
         .bind(limit as i16)
         .fetch_all(db_pool)
-        .await
-        .context(format!(
-            "Failed to get top {limit} guilds from the `guild_scores` table"
-        ))?;
+        .await?;
 
         db_top_guilds
             .into_iter()
@@ -144,12 +137,12 @@ impl ScoresModelController {
         db_pool: &PgPool,
         user_id: UserId,
     ) -> anyhow::Result<UserScoreboard> {
-        let db_score =
-            sqlx::query_as::<_, DbUserScoreboard>("SELECT * FROM user_scores WHERE discord_id = $1;")
-                .bind(user_id.to_string())
-                .fetch_optional(db_pool)
-                .await
-                .context(format!("Failed to get scores for user {user_id}"))?;
+        let db_score = sqlx::query_as::<_, DbUserScoreboard>(
+            "SELECT * FROM user_scores WHERE discord_id = $1;",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(db_pool)
+        .await?;
 
         match db_score {
             Some(db_score) => db_score.try_into(),
@@ -166,8 +159,7 @@ impl ScoresModelController {
         )
         .bind(guild_id.to_string())
         .fetch_optional(db_pool)
-        .await
-        .context(format!("Failed to get guild scores for guild {guild_id}"))?;
+        .await?;
 
         match db_score {
             Some(db_score) => db_score.try_into(),
