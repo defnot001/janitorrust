@@ -1,6 +1,6 @@
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
-use serenity::{ChannelType, GuildChannel, Role};
+use serenity::{ChannelType, CreateMessage, GuildChannel, Role};
 
 use crate::database::controllers::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
@@ -14,7 +14,13 @@ use crate::{assert_user_server, oops};
 #[poise::command(
     slash_command,
     guild_only = true,
-    subcommands("display", "update", "enable_honeypot", "disable_honeypot"),
+    subcommands(
+        "display",
+        "update",
+        "enable_honeypot",
+        "disable_honeypot",
+        "honeypot_message"
+    ),
     subcommand_required
 )]
 pub async fn config(_: AppContext<'_>) -> anyhow::Result<()> {
@@ -175,5 +181,29 @@ async fn disable_honeypot(ctx: AppContext<'_>) -> anyhow::Result<()> {
 
     ctx.say("Successfully removed honeypot channel from your config.")
         .await?;
+    Ok(())
+}
+
+/// Sends the honeypot warning message for your members into the channel this command is used in.
+#[poise::command(slash_command, guild_only = true)]
+async fn honeypot_message(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    ctx.defer_ephemeral().await?;
+    assert_user_server!(ctx);
+
+    let Some(interaction_channel) = ctx.guild_channel().await else {
+        ctx.say("This command can only be used in a guild channel!")
+            .await?;
+        return Ok(());
+    };
+
+    const WARNING: &str = "# ⚠️ Warning ⚠️\n**DO NOT POST MESSAGES in this channel, you will be banned from multiple TMC servers if you do so!**\nThis channel is used to catch bots that spam our server.";
+
+    interaction_channel
+        .send_message(ctx, CreateMessage::default().content(WARNING))
+        .await?;
+
+    ctx.say("Successfully posted honeypot warning message.")
+        .await?;
+
     Ok(())
 }

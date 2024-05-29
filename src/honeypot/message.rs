@@ -2,7 +2,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use poise::{serenity_prelude as serenity, FrameworkContext};
-use serenity::{CacheHttp, Context, GuildId, Message, PartialGuild, User, UserId};
+use serenity::{
+    Cache, CacheHttp, Context, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
+    GuildChannel, GuildId, Message, PartialGuild, Timestamp, User, UserId,
+};
 use sqlx::PgPool;
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -10,6 +13,8 @@ use crate::broadcast::broadcast_handler::{broadcast, BroadcastOptions, Broadcast
 use crate::database::controllers::badactor_model_controller::{
     BadActor, BadActorModelController, BadActorType, CreateBadActorOptions,
 };
+use crate::database::controllers::serverconfig_model_controller::ServerConfigModelController;
+use crate::util::embeds::EmbedColor;
 use crate::util::format;
 use crate::util::logger::Logger;
 use crate::Data;
@@ -34,25 +39,17 @@ pub async fn handle_message(
         return;
     };
 
+    if msg.author.id == framework.bot_id {
+        return;
+    }
+
     let is_in_honeypot = framework
         .user_data
         .honeypot_channels
         .contains(&msg.channel_id);
 
     if is_in_honeypot {
-        if let Err(e) = msg.delete(ctx).await {
-            let display_guild = if let Ok(guild) = guild_id.to_partial_guild(ctx).await {
-                format::fdisplay(&guild)
-            } else {
-                guild_id.to_string()
-            };
-
-            let log_msg = format!(
-                "Failed to delete message {} in guild {display_guild}",
-                msg.id
-            );
-            Logger::get().error(ctx, e, log_msg).await;
-        }
+        delete_msg_from_honeypot(&ctx, &ctx, &framework.user_data.db_pool, msg, guild_id).await;
     }
 
     let mut queue = framework.user_data.queue.lock().await;
@@ -206,4 +203,99 @@ async fn get_origin_guild(
             None
         }
     }
+}
+
+async fn delete_msg_from_honeypot(
+    cache_http: impl CacheHttp,
+    cache: impl AsRef<Cache>,
+    db_pool: &PgPool,
+    msg: &Message,
+    guild_id: GuildId,
+) {
+    let display_guild = match guild_id.to_partial_guild(&cache_http).await {
+        Ok(guild) => format::fdisplay(&guild),
+        Err(_) => guild_id.to_string(),
+    };
+
+    match msg.delete(&cache_http).await {
+        Ok(_) => {
+            let Some(log_channel) = get_log_channel(&cache_http, db_pool, guild_id).await else {
+                return;
+            };
+
+            let embed = get_msg_deleted_embed(cache, msg);
+
+            if let Err(e) = log_channel
+                .send_message(&cache_http, CreateMessage::default().embed(embed))
+                .await
+            {
+                let log_msg = format!(
+                        "Failed to inform {display_guild} in channel {} (`{}`) that a message was deleted from their honeypot",
+                        log_channel.name, log_channel.id
+                    );
+                Logger::get().error(&cache_http, e, log_msg).await;
+            }
+        }
+        Err(e) => {
+            let log_msg = format!(
+                "Failed to delete message {} in guild {display_guild}",
+                msg.id
+            );
+            Logger::get().error(&cache_http, e, log_msg).await;
+        }
+    }
+}
+
+async fn get_log_channel(
+    cache_http: impl CacheHttp,
+    db_pool: &PgPool,
+    guild_id: GuildId,
+) -> Option<GuildChannel> {
+    let Ok(Some(server_config)) =
+        ServerConfigModelController::get_by_guild_id(db_pool, guild_id).await
+    else {
+        return None;
+    };
+
+    let Some(log_channel_id) = server_config.log_channel_id else {
+        return None;
+    };
+
+    let Ok(log_channel) = log_channel_id.to_channel(&cache_http).await else {
+        return None;
+    };
+
+    let Some(guild_channel) = log_channel.guild() else {
+        return None;
+    };
+
+    if !guild_channel.is_text_based() {
+        return None;
+    }
+
+    Some(guild_channel)
+}
+
+fn get_msg_deleted_embed(cache: impl AsRef<Cache>, msg: &Message) -> CreateEmbed {
+    let embed_author = CreateEmbedAuthor::new(msg.author.name.clone()).icon_url(
+        msg.author
+            .static_avatar_url()
+            .unwrap_or(msg.author.default_avatar_url()),
+    );
+
+    let embed_footer = CreateEmbedFooter::new("Honeypot Log");
+
+    let content = format!(
+        "Janitor deleted a message from user {} from the honeypot channel.\n\n```{}```",
+        format::fdisplay(&msg.author),
+        msg.content_safe(cache)
+    );
+
+    CreateEmbed::default()
+        .author(embed_author)
+        .title("Honeypot message deleted")
+        .colour(EmbedColor::Orange)
+        .description(content)
+        .footer(embed_footer)
+        .timestamp(Timestamp::now())
 }

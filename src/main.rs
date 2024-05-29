@@ -22,7 +22,6 @@ use util::config::Config;
 use util::logger::Logger;
 use util::{error, format};
 
-use crate::database::migrate::migrate_db;
 use crate::honeypot::channels::populate_honeypot_channels;
 
 #[derive(Debug)]
@@ -51,8 +50,6 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
     tracing::info!("Successfully connected to the database!");
-
-    migrate_db(&db_pool).await;
 
     let intents = serenity::GatewayIntents::GUILDS
         | serenity::GatewayIntents::GUILD_MODERATION
