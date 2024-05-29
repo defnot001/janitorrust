@@ -15,7 +15,7 @@ use crate::database::controllers::badactor_model_controller::{
 };
 use crate::database::controllers::serverconfig_model_controller::ServerConfigModelController;
 use crate::util::embeds::EmbedColor;
-use crate::util::format;
+use crate::util::format::{self, escape_markdown};
 use crate::util::logger::Logger;
 use crate::Data;
 
@@ -288,7 +288,7 @@ fn get_msg_deleted_embed(cache: impl AsRef<Cache>, msg: &Message) -> CreateEmbed
     let content = format!(
         "Janitor deleted a message from user {} from the honeypot channel.\n\n```{}```",
         format::fdisplay(&msg.author),
-        msg.content_safe(cache)
+        escape_markdown(msg.content_safe(cache))
     );
 
     CreateEmbed::default()
