@@ -311,6 +311,15 @@ impl ServerConfigModelController {
             .collect()
     }
 
+    pub async fn get_all_guild_ids(pg_pool: &PgPool) -> anyhow::Result<Vec<GuildId>> {
+        sqlx::query_scalar::<_, String>("SELECT server_id FROM server_configs;")
+            .fetch_all(pg_pool)
+            .await?
+            .into_iter()
+            .map(|s| GuildId::from_str(&s).map_err(anyhow::Error::from))
+            .collect::<anyhow::Result<Vec<_>>>()
+    }
+
     pub async fn update(
         pg_pool: &PgPool,
         guild_id: GuildId,

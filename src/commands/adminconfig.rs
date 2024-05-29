@@ -1,9 +1,12 @@
 use poise::CreateReply;
+use serenity::all::CacheHttp;
 
 use crate::database::controllers::badactor_model_controller::BadActorModelController;
 use crate::database::controllers::serverconfig_model_controller::{
     ServerConfigComplete, ServerConfigModelController,
 };
+use crate::util::embeds::CreateJanitorEmbed;
+use crate::util::format;
 use crate::util::random_utils::parse_guild_ids;
 use crate::util::screenshot::FileManager;
 use crate::AppContext;
@@ -13,7 +16,7 @@ use crate::{assert_admin, assert_admin_server};
 #[poise::command(
     slash_command,
     guild_only = true,
-    subcommands("display_configs", "delete_bad_actor"),
+    subcommands("display_configs", "delete_bad_actor", "display_config_guilds", "display_guilds"),
     subcommand_required
 )]
 pub async fn adminconfig(_: AppContext<'_>) -> anyhow::Result<()> {
@@ -53,6 +56,65 @@ async fn display_configs(
     };
 
     ctx.send(reply).await?;
+    Ok(())
+}
+
+/// Display all guilds that currently have a config for Janitor.
+#[poise::command(slash_command)]
+async fn display_config_guilds(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_admin!(ctx);
+    assert_admin_server!(ctx);
+
+    let guild_ids = ServerConfigModelController::get_all_guild_ids(&ctx.data().db_pool).await?;
+    let iter = guild_ids.into_iter().map(|g| g.to_partial_guild(ctx));
+    let joined = futures::future::try_join_all(iter).await?;
+
+    let display_guilds = joined
+        .into_iter()
+        .map(|g| format::fdisplay(&g))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let embed = CreateJanitorEmbed::new(ctx.author())
+        .into_embed()
+        .title("Servers with Janitor config")
+        .description(display_guilds);
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+
+    Ok(())
+}
+
+/// Display all guilds that the bot is currently in.
+#[poise::command(slash_command)]
+async fn display_guilds(ctx: AppContext<'_>) -> anyhow::Result<()> {
+    ctx.defer().await?;
+    assert_admin!(ctx);
+    assert_admin_server!(ctx);
+
+    let Some(cache) = ctx.serenity_context().cache() else {
+        ctx.say("Failed to get the bot's cache.").await?;
+        return Ok(());
+    };
+
+    let guild_ids = cache.guilds();
+    let iter = guild_ids.into_iter().map(|g| g.to_partial_guild(ctx));
+    let joined = futures::future::try_join_all(iter).await?;
+
+    let display_guilds = joined
+        .into_iter()
+        .map(|g| format::fdisplay(&g))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let embed = CreateJanitorEmbed::new(ctx.author())
+        .into_embed()
+        .title("Servers Janitor is in")
+        .description(display_guilds);
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+
     Ok(())
 }
 
