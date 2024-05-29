@@ -16,7 +16,12 @@ use crate::{assert_admin, assert_admin_server};
 #[poise::command(
     slash_command,
     guild_only = true,
-    subcommands("display_configs", "delete_bad_actor", "display_config_guilds", "display_guilds"),
+    subcommands(
+        "display_configs",
+        "delete_bad_actor",
+        "display_config_guilds",
+        "display_guilds"
+    ),
     subcommand_required
 )]
 pub async fn adminconfig(_: AppContext<'_>) -> anyhow::Result<()> {
