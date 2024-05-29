@@ -13,16 +13,16 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS server_configs (
     server_id VARCHAR(20) NOT NULL PRIMARY KEY,
     log_channel VARCHAR(20),
-    honeypot_channel_id VARCHAR(20),
     ping_users BOOLEAN NOT NULL DEFAULT FALSE,
-    ping_role VARCHAR(20),
     spam_action_level INT NOT NULL DEFAULT 0,
     impersonation_action_level INT NOT NULL DEFAULT 0,
     bigotry_action_level INT NOT NULL DEFAULT 0,
-    honeypot_action_level INT NOT NULL DEFAULT 0,
     ignored_roles VARCHAR(20)[] NOT NULL DEFAULT '{}',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ping_role VARCHAR(20),
+    honeypot_channel_id VARCHAR(20),
+    honeypot_action_level INT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bad_actors (

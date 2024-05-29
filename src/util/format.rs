@@ -53,7 +53,7 @@ pub fn escape_markdown(input: impl Into<String>) -> String {
     let mut output = String::with_capacity(input.len());
 
     for c in input.chars() {
-        if c.is_ascii_alphanumeric() {
+        if c.is_ascii_alphanumeric() || c.is_ascii_whitespace() {
             output.push(c)
         } else {
             output.extend(['\\', c])
