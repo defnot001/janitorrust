@@ -4,7 +4,7 @@ use serenity::{CacheHttp, CreateAttachment, CreateEmbed};
 use crate::broadcast::broadcast_handler::BroadcastType;
 use crate::util::config::Config;
 
-use super::broadcast_handler::get_broadcast_message;
+use super::broadcast_handler::get_broadcast_message_no_buttons;
 
 pub struct BroadcastAdminServerOptions<'a> {
     pub config: &'a Config,
@@ -24,7 +24,7 @@ pub async fn broadcast_admin_server(
         broadcast_type,
     } = options;
 
-    let message = get_broadcast_message(broadcast_type.message(), embed, attachment);
+    let message = get_broadcast_message_no_buttons(broadcast_type.message(), embed, attachment);
 
     config
         .admin_server_log_channel

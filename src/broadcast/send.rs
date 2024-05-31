@@ -8,6 +8,7 @@ use crate::util::logger::Logger;
 
 use super::broadcast_handler::{self, get_broadcast_message};
 use super::listener::BroadcastListener;
+use super::moderate::get_moderation_action;
 
 pub struct SendBroadcastMessageOptions<'a> {
     pub broadcast_type: broadcast_handler::BroadcastType,
@@ -28,9 +29,20 @@ pub async fn send_broadcast_message(
         embed,
         attachment,
     } = options;
+    let action_level = get_moderation_action(
+        broadcast_type,
+        bad_actor.actor_type,
+        &listener.config.server_config,
+    );
 
     let content = get_message_with_pings(broadcast_type.message(), &listener.config, bad_actor);
-    let message = get_broadcast_message(&content, embed.clone(), attachment.clone());
+    let message = get_broadcast_message(
+        &content,
+        embed.clone(),
+        attachment.clone(),
+        action_level,
+        broadcast_type,
+    );
 
     if let Err(e) = listener
         .log_channel

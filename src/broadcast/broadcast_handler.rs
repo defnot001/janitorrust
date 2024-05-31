@@ -1,10 +1,12 @@
 use poise::serenity_prelude as serenity;
 use serenity::{
-    CacheHttp, CreateAttachment, CreateEmbed, CreateMessage, GuildId, PartialGuild, User, UserId,
+    CacheHttp, CreateActionRow, CreateAttachment, CreateButton, CreateEmbed, CreateMessage,
+    GuildId, PartialGuild, User, UserId,
 };
 use sqlx::PgPool;
 
 use crate::database::controllers::badactor_model_controller::{BadActor, BroadcastEmbedOptions};
+use crate::database::controllers::serverconfig_model_controller::ActionLevel;
 use crate::util::embeds::EmbedColor;
 use crate::util::{config, format, logger};
 
@@ -183,6 +185,39 @@ async fn broadcast_to_listeners(
 }
 
 pub fn get_broadcast_message(
+    content: &str,
+    embed: CreateEmbed,
+    attachment: Option<CreateAttachment>,
+    action_level: ActionLevel,
+    broadcast_type: BroadcastType,
+) -> CreateMessage {
+    let mut action_row = CreateActionRow::Buttons(vec![]);
+
+    if broadcast_type.is_new_report() && action_level == ActionLevel::Notify {
+        let ban_button = CreateButton::new("ban").label("Ban");
+        let softban_button = CreateButton::new("softban").label("Softban");
+        let kick_button = CreateButton::new("kick").label("Kick");
+
+        action_row = CreateActionRow::Buttons(vec![ban_button, softban_button, kick_button]);
+    } else if broadcast_type == BroadcastType::Deactivate {
+        action_row = CreateActionRow::Buttons(vec![CreateButton::new("unban").label("Unban")]);
+    }
+
+    if let Some(attachment) = attachment {
+        CreateMessage::new()
+            .content(content)
+            .embed(embed)
+            .add_file(attachment)
+            .components(vec![action_row])
+    } else {
+        CreateMessage::new()
+            .content(content)
+            .embed(embed)
+            .components(vec![action_row])
+    }
+}
+
+pub fn get_broadcast_message_no_buttons(
     content: &str,
     embed: CreateEmbed,
     attachment: Option<CreateAttachment>,

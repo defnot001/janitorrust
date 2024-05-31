@@ -212,7 +212,7 @@ fn get_non_ignored_roles(
     non_ignored_roles
 }
 
-fn get_moderation_action(
+pub fn get_moderation_action(
     broadcast_type: BroadcastType,
     actor_type: BadActorType,
     server_config: &ServerConfig,
