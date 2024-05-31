@@ -117,7 +117,7 @@ pub async fn broadcast(cache_http: impl CacheHttp, options: BroadcastOptions<'_>
     if broadcast_type.is_new_report() && notify_user(&cache_http, bad_actor_user).await.is_err() {
         let log_msg = format!(
             "Failed to inform {} about the moderation actions in DM",
-            format::display(reporting_user)
+            format::display(bad_actor_user)
         );
         logger::Logger::get().warn(&cache_http, log_msg).await;
     }
