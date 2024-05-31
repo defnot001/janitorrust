@@ -94,6 +94,19 @@ async fn handle_button(
         return Ok(());
     };
 
+    match custom_id {
+        CustomId::Ban | CustomId::SoftBan | CustomId::Unban => {
+            if !permissions.ban_members() {
+                return Ok(());
+            }
+        }
+        CustomId::Kick => {
+            if !permissions.kick_members() {
+                return Ok(());
+            }
+        }
+    }
+
     if !permissions.ban_members() {
         return Ok(());
     }
