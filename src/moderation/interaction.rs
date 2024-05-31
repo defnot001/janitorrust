@@ -9,7 +9,6 @@ use serenity::{
 use sqlx::PgPool;
 
 use crate::{
-    database::controllers::user_model_controller::UserModelController,
     honeypot::message::get_log_channel,
     util::{format, logger::Logger},
 };
@@ -77,11 +76,28 @@ async fn handle_button(
         return Ok(());
     };
 
-    if !is_janitor_user(interaction.user.id, db_pool).await {
+    let interaction_user = interaction.user.clone();
+
+    let Ok(interaction_member) = interaction_guild_id
+        .member(&cache_http, interaction_user.id)
+        .await
+    else {
+        return Ok(());
+    };
+
+    let Some(permissions) = interaction_member.permissions else {
+        let message = format!(
+            "Cannot get permissions for member {}",
+            format::display(&interaction_user)
+        );
+        tracing::warn!("{message}");
+        return Ok(());
+    };
+
+    if !permissions.ban_members() {
         return Ok(());
     }
 
-    let interaction_user = interaction.user.clone();
     let target_user = get_target_user(&embed, &cache_http).await?;
 
     handle_moderation(
@@ -118,14 +134,6 @@ async fn handle_button(
     }
 
     Ok(())
-}
-
-async fn is_janitor_user(interaction_user_id: UserId, db_pool: &PgPool) -> bool {
-    let Ok(Some(_)) = UserModelController::get(db_pool, interaction_user_id).await else {
-        return false;
-    };
-
-    true
 }
 
 fn get_broadcast_embed(interaction: &ComponentInteraction) -> Option<Embed> {
