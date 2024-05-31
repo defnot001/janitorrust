@@ -5,6 +5,7 @@ mod broadcast;
 mod commands;
 mod database;
 mod honeypot;
+mod moderation;
 mod util;
 
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use commands::{adminconfig, adminlist, badactor, config, scores, user};
 use dashmap::DashSet;
 use honeypot::channels::HoneypotChannels;
 use honeypot::message::{handle_message, Queue};
+use moderation::interaction::handle_component_interaction;
 use poise::serenity_prelude as serenity;
 use serenity::InteractionType;
 use sqlx::postgres::PgPoolOptions;
@@ -128,6 +130,26 @@ async fn event_handler(
             tracing::info!("Successfully populated honeypot channels.");
         }
         serenity::FullEvent::InteractionCreate { interaction, .. } => {
+            if interaction.kind() == InteractionType::Component {
+                let Some(component_interaction) = interaction.as_message_component() else {
+                    return Ok(());
+                };
+
+                if let Err(e) = handle_component_interaction(
+                    component_interaction,
+                    ctx,
+                    &framework.user_data.db_pool,
+                )
+                .await
+                {
+                    let log_msg = format!(
+                        "Failed to handle component interaction {:?}",
+                        component_interaction.data
+                    );
+                    Logger::get().error(ctx, e, log_msg).await;
+                }
+            }
+
             if interaction.kind() != InteractionType::Command {
                 return Ok(());
             }

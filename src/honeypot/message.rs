@@ -246,7 +246,7 @@ async fn delete_msg_from_honeypot(
     }
 }
 
-async fn get_log_channel(
+pub async fn get_log_channel(
     cache_http: impl CacheHttp,
     db_pool: &PgPool,
     guild_id: GuildId,
