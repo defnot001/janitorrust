@@ -78,6 +78,7 @@ async fn handle_button(
 
     let custom_id = CustomId::from_str(&interaction.data.custom_id)?;
 
+    // cheaper to return here
     if custom_id == CustomId::Confirm || custom_id == CustomId::Cancel {
         return Ok(());
     }
@@ -115,10 +116,10 @@ async fn handle_button(
                 return Ok(());
             }
         }
-    }
-
-    if !permissions.ban_members() {
-        return Ok(());
+        // technically unreachable at this point but I wanna play it safe
+        _ => {
+            return Ok(());
+        }
     }
 
     let target_user = get_target_user(&embed, &cache_http).await?;
@@ -353,6 +354,9 @@ pub async fn handle_moderation(
                 )
                 .await;
             }
+        }
+        _ => {
+            return;
         }
     }
 }

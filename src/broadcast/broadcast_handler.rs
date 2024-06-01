@@ -191,29 +191,33 @@ pub fn get_broadcast_message(
     action_level: ActionLevel,
     broadcast_type: BroadcastType,
 ) -> CreateMessage {
-    let mut action_row = CreateActionRow::Buttons(vec![]);
+    let mut buttons = Vec::new();
 
     if broadcast_type.is_new_report() && action_level == ActionLevel::Notify {
-        let ban_button = CreateButton::new("ban").label("Ban");
-        let softban_button = CreateButton::new("softban").label("Softban");
-        let kick_button = CreateButton::new("kick").label("Kick");
-
-        action_row = CreateActionRow::Buttons(vec![ban_button, softban_button, kick_button]);
+        buttons.push(CreateButton::new("ban").label("Ban"));
+        buttons.push(CreateButton::new("softban").label("Softban"));
+        buttons.push(CreateButton::new("kick").label("Kick"));
     } else if broadcast_type == BroadcastType::Deactivate {
-        action_row = CreateActionRow::Buttons(vec![CreateButton::new("unban").label("Unban")]);
+        buttons.push(CreateButton::new("unban").label("Unban"));
     }
 
-    if let Some(attachment) = attachment {
-        CreateMessage::new()
-            .content(content)
-            .embed(embed)
-            .add_file(attachment)
-            .components(vec![action_row])
+    let button_len = buttons.len();
+    let action_row = CreateActionRow::Buttons(buttons);
+
+    let message = CreateMessage::new().content(content).embed(embed);
+
+    // add the screenshot to the embed
+    let message = if let Some(attachment) = attachment {
+        message.add_file(attachment)
     } else {
-        CreateMessage::new()
-            .content(content)
-            .embed(embed)
-            .components(vec![action_row])
+        message
+    };
+
+    // add the buttons to the embed and return the message
+    if button_len > 0 {
+        message.components(vec![action_row])
+    } else {
+        message
     }
 }
 
