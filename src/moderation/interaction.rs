@@ -13,12 +13,14 @@ use crate::{
     util::{format, logger::Logger},
 };
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum CustomId {
     Ban,
     SoftBan,
     Kick,
     Unban,
+    Confirm,
+    Cancel,
 }
 
 impl FromStr for CustomId {
@@ -30,6 +32,8 @@ impl FromStr for CustomId {
             "softban" => Ok(Self::SoftBan),
             "kick" => Ok(Self::Kick),
             "unban" => Ok(Self::Unban),
+            "confirm" => Ok(Self::Confirm),
+            "cancel" => Ok(Self::Cancel),
             _ => anyhow::bail!("Unknown custom id {s}"),
         }
     }
@@ -42,6 +46,8 @@ impl Display for CustomId {
             Self::SoftBan => write!(f, "softban"),
             Self::Kick => write!(f, "kick"),
             Self::Unban => write!(f, "unban"),
+            Self::Confirm => write!(f, "confirm"),
+            Self::Cancel => write!(f, "cancel"),
         }
     }
 }
@@ -71,6 +77,10 @@ async fn handle_button(
     };
 
     let custom_id = CustomId::from_str(&interaction.data.custom_id)?;
+
+    if custom_id == CustomId::Confirm || custom_id == CustomId::Cancel {
+        return Ok(());
+    }
 
     let Some(embed) = get_broadcast_embed(interaction) else {
         return Ok(());
