@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
 
     let intents = serenity::GatewayIntents::GUILDS
         | serenity::GatewayIntents::GUILD_MODERATION
+        | serenity::GatewayIntents::GUILD_MEMBERS
         | serenity::GatewayIntents::GUILD_MESSAGES
         | serenity::GatewayIntents::MESSAGE_CONTENT;
 

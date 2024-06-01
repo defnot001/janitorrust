@@ -96,13 +96,26 @@ async fn handle_button(
         return Ok(());
     };
 
-    let Some(permissions) = interaction_member.permissions else {
-        let message = format!(
-            "Cannot get permissions for member {}",
-            format::display(&interaction_user)
-        );
-        tracing::warn!("{message}");
+    let Some(cache) = cache_http.cache() else {
+        tracing::warn!("Failed to get bot cache in button interaction handler");
         return Ok(());
+    };
+
+    let permissions = match interaction_member.permissions(cache) {
+        Ok(permissions) => permissions,
+        Err(e) => {
+            let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
+                Ok(g) => format::fdisplay(&g),
+                Err(_) => interaction_guild_id.to_string(),
+            };
+
+            let log_msg = format!(
+                "Failed to get guild level permissions for user {} in guild {display_guild}",
+                format::display(&interaction_user)
+            );
+            Logger::get().error(&cache_http, e, log_msg).await;
+            return Ok(());
+        }
     };
 
     match custom_id {
