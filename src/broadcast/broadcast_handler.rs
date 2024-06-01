@@ -39,10 +39,7 @@ impl BroadcastType {
     }
 
     pub fn is_new_report(&self) -> bool {
-        match self {
-            Self::Report | Self::Honeypot => true,
-            _ => false,
-        }
+        matches!(self, Self::Report | Self::Honeypot)
     }
 }
 

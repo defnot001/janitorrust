@@ -175,7 +175,8 @@ async fn save_bad_actor(
                 format::display(target_user)
             );
             Logger::get().error(cache_http, &e, log_msg).await;
-            return Err(e);
+
+            Err(e)
         }
     }
 }
@@ -186,7 +187,8 @@ async fn get_bot_user(cache_http: impl CacheHttp, bot_id: UserId) -> anyhow::Res
         Err(e) => {
             let log_msg = format!("Failed to get bot user from ID {bot_id}",);
             Logger::get().error(&cache_http, &e, log_msg).await;
-            return Err(anyhow::Error::from(e));
+
+            Err(anyhow::Error::from(e))
         }
     }
 }

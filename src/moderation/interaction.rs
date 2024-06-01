@@ -4,7 +4,7 @@ use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
 use serenity::{
     CacheHttp, ComponentInteraction, ComponentInteractionDataKind, CreateMessage, EditMessage,
-    Embed, GuildChannel, GuildId, User, UserId,
+    Embed, GuildChannel, GuildId, Member, Message, User, UserId,
 };
 use sqlx::PgPool;
 
@@ -52,6 +52,81 @@ impl Display for CustomId {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ModerationCustomId {
+    Ban,
+    SoftBan,
+    Kick,
+    Unban,
+}
+
+impl Display for ModerationCustomId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ban => write!(f, "ban"),
+            Self::SoftBan => write!(f, "softban"),
+            Self::Kick => write!(f, "kick"),
+            Self::Unban => write!(f, "unban"),
+        }
+    }
+}
+
+impl TryFrom<CustomId> for ModerationCustomId {
+    type Error = anyhow::Error;
+
+    fn try_from(custom_id: CustomId) -> Result<Self, Self::Error> {
+        match custom_id {
+            CustomId::Ban => Ok(ModerationCustomId::Ban),
+            CustomId::SoftBan => Ok(ModerationCustomId::SoftBan),
+            CustomId::Kick => Ok(ModerationCustomId::Kick),
+            CustomId::Unban => Ok(ModerationCustomId::Unban),
+            _ => anyhow::bail!("custom id `{custom_id}` is not a custom moderation id."),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HandleModerationOptions<'a> {
+    interaction_guild_id: GuildId,
+    custom_id: ModerationCustomId,
+    db_pool: &'a PgPool,
+    target_user: &'a User,
+    interaction_user: &'a User,
+    embed: &'a Embed,
+}
+
+#[derive(Debug)]
+struct RemoveButtonOptions<'a> {
+    interaction_guild_id: GuildId,
+    target_user: &'a User,
+    message: &'a mut Box<Message>,
+}
+
+#[derive(Debug)]
+struct CanModerateOptions<'a> {
+    interaction_guild_id: GuildId,
+    custom_id: ModerationCustomId,
+    interaction_member: &'a Member,
+}
+
+#[derive(Debug)]
+struct HandleModerationFailOptions<'a> {
+    error: anyhow::Error,
+    custom_id: ModerationCustomId,
+    interaction_guild_id: GuildId,
+    log_channel: &'a GuildChannel,
+    target_user: &'a User,
+}
+
+#[derive(Debug)]
+struct HandleModerationSuccessOptions<'a> {
+    custom_id: ModerationCustomId,
+    interaction_guild_id: GuildId,
+    log_channel: &'a GuildChannel,
+    target_user: &'a User,
+    interaction_user: &'a User,
+}
+
 pub async fn handle_component_interaction(
     interaction: &ComponentInteraction,
     cache_http: impl CacheHttp,
@@ -59,7 +134,7 @@ pub async fn handle_component_interaction(
 ) -> anyhow::Result<()> {
     match interaction.data.kind {
         ComponentInteractionDataKind::Button => {
-            handle_button(interaction, &cache_http, db_pool).await?;
+            handle_button_interaction(interaction, &cache_http, db_pool).await?;
         }
         _ => return Ok(()),
     }
@@ -67,7 +142,7 @@ pub async fn handle_component_interaction(
     Ok(())
 }
 
-async fn handle_button(
+async fn handle_button_interaction(
     interaction: &ComponentInteraction,
     cache_http: impl CacheHttp,
     db_pool: &PgPool,
@@ -78,27 +153,86 @@ async fn handle_button(
 
     let custom_id = CustomId::from_str(&interaction.data.custom_id)?;
 
-    // cheaper to return here
-    if custom_id == CustomId::Confirm || custom_id == CustomId::Cancel {
+    let Ok(custom_id) = ModerationCustomId::try_from(custom_id) else {
         return Ok(());
-    }
+    };
 
     let Some(embed) = get_broadcast_embed(interaction) else {
         return Ok(());
     };
 
-    let interaction_user = interaction.user.clone();
-
     let Ok(interaction_member) = interaction_guild_id
-        .member(&cache_http, interaction_user.id)
+        .member(&cache_http, interaction.user.id)
         .await
     else {
         return Ok(());
     };
 
+    let options = CanModerateOptions {
+        interaction_guild_id,
+        custom_id,
+        interaction_member: &interaction_member,
+    };
+    if !can_moderate(&cache_http, options).await {
+        return Ok(());
+    }
+
+    let target_user = get_target_user(&cache_http, &embed).await?;
+
+    let options = HandleModerationOptions {
+        interaction_guild_id,
+        custom_id,
+        db_pool,
+        target_user: &target_user,
+        interaction_user: &interaction_member.user,
+        embed: &embed,
+    };
+    handle_moderation(&cache_http, options).await;
+
+    let options = RemoveButtonOptions {
+        interaction_guild_id,
+        target_user: &target_user,
+        message: &mut interaction.message.clone(),
+    };
+    remove_buttons(&cache_http, options).await;
+
+    Ok(())
+}
+
+async fn remove_buttons(cache_http: impl CacheHttp, options: RemoveButtonOptions<'_>) {
+    let RemoveButtonOptions {
+        interaction_guild_id,
+        target_user,
+        message,
+    } = options;
+
+    if let Err(e) = message
+        .edit(&cache_http, EditMessage::new().components(vec![]))
+        .await
+    {
+        let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
+            Ok(g) => format::fdisplay(&g),
+            Err(_) => interaction_guild_id.to_string(),
+        };
+
+        let log_msg = format!(
+            "Failed to remove buttons from broadcast embed for target user {} in {display_guild}",
+            format::display(target_user)
+        );
+        Logger::get().error(&cache_http, e, log_msg).await;
+    }
+}
+
+async fn can_moderate(cache_http: impl CacheHttp, options: CanModerateOptions<'_>) -> bool {
+    let CanModerateOptions {
+        interaction_guild_id,
+        custom_id,
+        interaction_member,
+    } = options;
+
     let Some(cache) = cache_http.cache() else {
         tracing::warn!("Failed to get bot cache in button interaction handler");
-        return Ok(());
+        return false;
     };
 
     let permissions = match interaction_member.permissions(cache) {
@@ -111,66 +245,34 @@ async fn handle_button(
 
             let log_msg = format!(
                 "Failed to get guild level permissions for user {} in guild {display_guild}",
-                format::display(&interaction_user)
+                format::display(&interaction_member.user)
             );
             Logger::get().error(&cache_http, e, log_msg).await;
-            return Ok(());
+
+            return false;
         }
     };
 
     match custom_id {
-        CustomId::Ban | CustomId::SoftBan | CustomId::Unban => {
+        ModerationCustomId::Ban | ModerationCustomId::SoftBan | ModerationCustomId::Unban => {
             if !permissions.ban_members() {
-                return Ok(());
+                let message = format!("Guild member {} tried to use moderation button `{custom_id}` but lacks ban permissions", format::display(&interaction_member.user));
+                tracing::warn!("{message}");
+
+                return false;
             }
         }
-        CustomId::Kick => {
+        ModerationCustomId::Kick => {
             if !permissions.kick_members() {
-                return Ok(());
+                let message = format!("Guild member {} tried to use moderation button `{custom_id}` but lacks kick permissions", format::display(&interaction_member.user));
+                tracing::warn!("{message}");
+
+                return false;
             }
         }
-        // technically unreachable at this point but I wanna play it safe
-        _ => {
-            return Ok(());
-        }
     }
 
-    let target_user = get_target_user(&embed, &cache_http).await?;
-
-    handle_moderation(
-        &cache_http,
-        db_pool,
-        interaction_guild_id,
-        &target_user,
-        &interaction_user,
-        custom_id,
-    )
-    .await;
-
-    if cache_http.cache().is_none() {
-        let log_msg = "Failed to get cache to request broadcast message content";
-        Logger::get().warn(&cache_http, log_msg).await;
-    }
-
-    if let Err(e) = interaction
-        .message
-        .clone()
-        .edit(&cache_http, EditMessage::new().components(vec![]))
-        .await
-    {
-        let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
-            Ok(g) => format::fdisplay(&g),
-            Err(_) => interaction_guild_id.to_string(),
-        };
-
-        let log_msg = format!(
-            "Failed to remove buttons from broadcast embed for target user {} in {display_guild}",
-            format::display(&target_user)
-        );
-        Logger::get().error(&cache_http, e, log_msg).await;
-    }
-
-    Ok(())
+    true
 }
 
 fn get_broadcast_embed(interaction: &ComponentInteraction) -> Option<Embed> {
@@ -205,8 +307,8 @@ fn get_broadcast_embed(interaction: &ComponentInteraction) -> Option<Embed> {
 }
 
 async fn get_target_user(
-    broadcast_embed: &Embed,
     cache_http: impl CacheHttp,
+    broadcast_embed: &Embed,
 ) -> anyhow::Result<User> {
     let Some(title) = broadcast_embed.title.clone() else {
         anyhow::bail!("Broadcast embed missing title");
@@ -232,14 +334,33 @@ async fn get_target_user(
         .map_err(anyhow::Error::from)
 }
 
-pub async fn handle_moderation(
-    cache_http: impl CacheHttp,
-    db_pool: &PgPool,
-    interaction_guild_id: GuildId,
-    target_user: &User,
-    interaction_user: &User,
-    custom_id: CustomId,
-) {
+fn get_ban_reason(embed: &Embed) -> anyhow::Result<String> {
+    let embed_fields = embed.fields.clone();
+
+    let Some(report_id_field) = embed_fields.iter().find(|f| f.name.as_str() == "Report ID") else {
+        anyhow::bail!("Cannot find field `Report ID` in broadcast embed")
+    };
+
+    let Some(type_field) = embed_fields.iter().find(|f| f.name.as_str() == "Type") else {
+        anyhow::bail!("Cannot find field `Type` in broadcast embed")
+    };
+
+    Ok(format!(
+        "Bad Actor {} ({})",
+        type_field.value, report_id_field.value
+    ))
+}
+
+pub async fn handle_moderation(cache_http: impl CacheHttp, options: HandleModerationOptions<'_>) {
+    let HandleModerationOptions {
+        interaction_guild_id,
+        custom_id,
+        db_pool,
+        target_user,
+        interaction_user,
+        embed,
+    } = options;
+
     let Some(log_channel) = get_log_channel(&cache_http, db_pool, interaction_guild_id).await
     else {
         let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
@@ -256,35 +377,25 @@ pub async fn handle_moderation(
         return;
     };
 
-    match custom_id {
-        CustomId::Ban => {
-            let ban_res = interaction_guild_id
-                .ban(&cache_http.http(), target_user.id, 7)
-                .await;
+    let mut moderation_error = None;
 
-            if let Err(e) = ban_res {
-                handle_moderation_fail(
-                    &cache_http,
-                    &log_channel,
-                    anyhow::Error::from(e),
-                    custom_id,
-                    target_user,
-                    interaction_guild_id,
-                )
-                .await;
-            } else {
-                handle_moderation_success(
-                    &cache_http,
-                    &log_channel,
-                    custom_id,
-                    target_user,
-                    interaction_user,
-                    interaction_guild_id,
-                )
-                .await;
+    match custom_id {
+        ModerationCustomId::Ban => {
+            if let Ok(ban_reason) = get_ban_reason(embed) {
+                if let Err(e) = interaction_guild_id
+                    .ban_with_reason(&cache_http.http(), target_user.id, 7, ban_reason)
+                    .await
+                {
+                    moderation_error = Some(anyhow::Error::from(e));
+                }
+            } else if let Err(e) = interaction_guild_id
+                .ban(&cache_http.http(), target_user.id, 7)
+                .await
+            {
+                moderation_error = Some(anyhow::Error::from(e));
             }
         }
-        CustomId::SoftBan => {
+        ModerationCustomId::SoftBan => {
             let http = cache_http.http();
 
             let softban_res = interaction_guild_id
@@ -293,95 +404,60 @@ pub async fn handle_moderation(
                 .await;
 
             if let Err(e) = softban_res {
-                handle_moderation_fail(
-                    &cache_http,
-                    &log_channel,
-                    anyhow::Error::from(e),
-                    custom_id,
-                    target_user,
-                    interaction_guild_id,
-                )
-                .await;
-            } else {
-                handle_moderation_success(
-                    &cache_http,
-                    &log_channel,
-                    custom_id,
-                    target_user,
-                    interaction_user,
-                    interaction_guild_id,
-                )
-                .await;
+                moderation_error = Some(anyhow::Error::from(e));
             }
         }
-        CustomId::Kick => {
-            let kick_res = interaction_guild_id
+        ModerationCustomId::Kick => {
+            if let Err(e) = interaction_guild_id
                 .kick(&cache_http.http(), target_user.id)
-                .await;
-
-            if let Err(e) = kick_res {
-                handle_moderation_fail(
-                    &cache_http,
-                    &log_channel,
-                    anyhow::Error::from(e),
-                    custom_id,
-                    target_user,
-                    interaction_guild_id,
-                )
-                .await;
-            } else {
-                handle_moderation_success(
-                    &cache_http,
-                    &log_channel,
-                    custom_id,
-                    target_user,
-                    interaction_user,
-                    interaction_guild_id,
-                )
-                .await;
+                .await
+            {
+                moderation_error = Some(anyhow::Error::from(e));
             }
         }
-        CustomId::Unban => {
-            let unban_res = interaction_guild_id
+        ModerationCustomId::Unban => {
+            if let Err(e) = interaction_guild_id
                 .unban(&cache_http.http(), target_user.id)
-                .await;
-
-            if let Err(e) = unban_res {
-                handle_moderation_fail(
-                    &cache_http,
-                    &log_channel,
-                    anyhow::Error::from(e),
-                    custom_id,
-                    target_user,
-                    interaction_guild_id,
-                )
-                .await;
-            } else {
-                handle_moderation_success(
-                    &cache_http,
-                    &log_channel,
-                    custom_id,
-                    target_user,
-                    interaction_user,
-                    interaction_guild_id,
-                )
-                .await;
+                .await
+            {
+                moderation_error = Some(anyhow::Error::from(e));
             }
         }
-        _ => {
-            return;
-        }
+    }
+
+    if let Some(e) = moderation_error {
+        let options = HandleModerationFailOptions {
+            custom_id,
+            interaction_guild_id,
+            target_user,
+            error: e,
+            log_channel: &log_channel,
+        };
+        handle_moderation_fail(&cache_http, options).await;
+    } else {
+        let options = HandleModerationSuccessOptions {
+            custom_id,
+            interaction_guild_id,
+            target_user,
+            interaction_user,
+            log_channel: &log_channel,
+        };
+        handle_moderation_success(&cache_http, options).await;
     }
 }
 
 async fn handle_moderation_fail(
     cache_http: impl CacheHttp,
-    log_channel: &GuildChannel,
-    e: anyhow::Error,
-    custom_id: CustomId,
-    target_user: &User,
-    interaction_guild_id: GuildId,
+    options: HandleModerationFailOptions<'_>,
 ) {
+    let HandleModerationFailOptions {
+        error,
+        custom_id,
+        interaction_guild_id,
+        log_channel,
+        target_user,
+    } = options;
+
     let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
         Ok(g) => format::fdisplay(&g),
         Err(_) => interaction_guild_id.to_string(),
@@ -391,7 +467,7 @@ async fn handle_moderation_fail(
         "Failed to {custom_id} user {} from {display_guild}",
         format::display(target_user)
     );
-    Logger::get().error(&cache_http, e, log_msg).await;
+    Logger::get().error(&cache_http, error, log_msg).await;
 
     let guild_message = format!(
         "Failed to {custom_id} user {} from your guild!",
@@ -412,12 +488,16 @@ async fn handle_moderation_fail(
 
 async fn handle_moderation_success(
     cache_http: impl CacheHttp,
-    log_channel: &GuildChannel,
-    custom_id: CustomId,
-    target_user: &User,
-    interaction_user: &User,
-    interaction_guild_id: GuildId,
+    options: HandleModerationSuccessOptions<'_>,
 ) {
+    let HandleModerationSuccessOptions {
+        custom_id,
+        interaction_guild_id,
+        log_channel,
+        target_user,
+        interaction_user,
+    } = options;
+
     let guild_message = format!(
         "{} took moderation action `{custom_id} against user {} using the broadcast embed buttons.`",
         format::fdisplay(interaction_user),

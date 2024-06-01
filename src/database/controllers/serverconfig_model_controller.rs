@@ -65,7 +65,7 @@ struct DbServerConfig {
     updated_at: NaiveDateTime,
     ping_role: Option<String>,
     honeypot_channel_id: Option<String>,
-    honeypot_action_level: i32
+    honeypot_action_level: i32,
 }
 
 #[derive(Debug, Clone)]
