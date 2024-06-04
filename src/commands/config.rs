@@ -70,6 +70,8 @@ async fn update(
     honeypot_action_level: Option<ActionLevel>,
     #[description = "Role IDs to ignore when taking action. Separate multiple with a comma (,)."]
     ignored_roles: Option<String>,
+    #[description = "Custom ban reason for automatic bans. Add {id} and/or {type} to show them in your reason."]
+    ban_reason: Option<String>,
 ) -> anyhow::Result<()> {
     ctx.defer().await?;
     assert_user_server!(ctx);
@@ -94,6 +96,27 @@ async fn update(
     let log_channel_id = log_channel.map(|c| c.id);
     let ping_role = ping_role.map(|r| r.id);
 
+    let ban_reason = if let Some(reason) = ban_reason.clone() {
+        if reason.len() > 500 {
+            ctx.say(format!(
+                "Maximum ban reason length is 500, got {}!",
+                reason.len()
+            ))
+            .await?;
+            return Ok(());
+        }
+
+        if !check_ban_reason(&reason) {
+            ctx.say("Your custom ban reason is wrongly formatted. Please fix it and try again!")
+                .await?;
+            return Ok(());
+        }
+
+        ban_reason
+    } else {
+        None
+    };
+
     let update_values = UpdateServerConfig {
         log_channel_id,
         ping_users,
@@ -103,6 +126,7 @@ async fn update(
         bigotry_action_level,
         honeypot_action_level,
         ignored_roles,
+        ban_reason,
     };
 
     let updated =
@@ -206,4 +230,22 @@ async fn honeypot_message(ctx: AppContext<'_>) -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+fn check_ban_reason(ban_reason: &str) -> bool {
+    let mut brace_count = 0;
+
+    for c in ban_reason.chars() {
+        match c {
+            '{' => brace_count += 1,
+            '}' => brace_count -= 1,
+            _ => {}
+        }
+
+        if brace_count < 0 {
+            return false;
+        }
+    }
+
+    brace_count == 0
 }

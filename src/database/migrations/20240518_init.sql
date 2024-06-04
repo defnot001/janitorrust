@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS server_configs (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ping_role VARCHAR(20),
     honeypot_channel_id VARCHAR(20),
-    honeypot_action_level INT NOT NULL DEFAULT 0
+    honeypot_action_level INT NOT NULL DEFAULT 0,
+    ban_reason VARCHAR(512),
 );
 
 CREATE TABLE IF NOT EXISTS bad_actors (

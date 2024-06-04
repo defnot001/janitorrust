@@ -52,7 +52,7 @@ pub async fn moderate(cache_http: impl CacheHttp, options: ModerateOptions<'_>) 
             &listener.config.guild,
             target_user,
             &listener.log_channel,
-            bad_actor.ban_reason(),
+            bad_actor.ban_reason(listener.config.server_config.ban_reason.clone()),
         )
         .await;
 
@@ -136,7 +136,7 @@ pub async fn moderate(cache_http: impl CacheHttp, options: ModerateOptions<'_>) 
                 &listener.config.guild,
                 target_user,
                 &listener.log_channel,
-                bad_actor.ban_reason(),
+                bad_actor.ban_reason(listener.config.server_config.ban_reason.clone()),
             )
             .await
         }

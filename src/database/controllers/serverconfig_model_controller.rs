@@ -66,6 +66,7 @@ struct DbServerConfig {
     ping_role: Option<String>,
     honeypot_channel_id: Option<String>,
     honeypot_action_level: i32,
+    ban_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,7 @@ pub struct ServerConfig {
     pub ignored_roles: Vec<RoleId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub ban_reason: Option<String>,
 }
 
 impl TryFrom<DbServerConfig> for ServerConfig {
@@ -101,6 +103,7 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             ignored_roles,
             created_at,
             updated_at,
+            ban_reason,
         } = db_server_config;
 
         let guild_id = GuildId::from_str(&server_id)?;
@@ -135,6 +138,7 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             ignored_roles,
             created_at,
             updated_at,
+            ban_reason,
         })
     }
 }
@@ -217,6 +221,12 @@ impl ServerConfigComplete {
                 .join(", ")
         };
 
+        let ban_reason = self
+            .server_config
+            .ban_reason
+            .clone()
+            .unwrap_or(String::from("Not set."));
+
         let created_at = format::display_time(self.server_config.created_at);
         let updated_at = format::display_time(self.server_config.updated_at);
 
@@ -233,6 +243,7 @@ impl ServerConfigComplete {
             .field("Bigotry Action Level", bigotry, false)
             .field("Honeypot Action Level", honeypot, false)
             .field("Ignored Roles", ignored_roles, false)
+            .field("Custom Ban Reason", ban_reason, false)
             .field("Created At", created_at, false)
             .field("Updated At", updated_at, false)
     }
@@ -247,6 +258,7 @@ pub struct UpdateServerConfig {
     pub bigotry_action_level: Option<ActionLevel>,
     pub honeypot_action_level: Option<ActionLevel>,
     pub ignored_roles: Option<Vec<RoleId>>,
+    pub ban_reason: Option<String>,
 }
 
 pub struct ServerConfigModelController;
@@ -376,6 +388,12 @@ impl ServerConfigModelController {
             })
             .unwrap_or(previous.ignored_roles);
 
+        let ban_reason: Option<String> = if let Some(reason) = update.ban_reason {
+            Some(reason)
+        } else {
+            previous.ban_reason
+        };
+
         let db_config = sqlx::query_as::<_, DbServerConfig>(
             r#"
             UPDATE server_configs
@@ -387,6 +405,7 @@ impl ServerConfigModelController {
                 bigotry_action_level = $7,
                 honeypot_action_level = $8,
                 ignored_roles = $9,
+                ban_reason = $10,
                 updated_at = now()
             WHERE server_id = $1
             RETURNING *;
@@ -401,6 +420,7 @@ impl ServerConfigModelController {
         .bind(bigotry_action_level)
         .bind(honeypot_action_level)
         .bind(&ignored_roles)
+        .bind(ban_reason)
         .fetch_one(pg_pool)
         .await?;
 

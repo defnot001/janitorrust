@@ -187,8 +187,14 @@ impl BadActor {
         }
     }
 
-    pub fn ban_reason(&self) -> String {
-        format!("Bad Actor {} ({})", self.actor_type, self.id)
+    pub fn ban_reason(&self, custom_reason: Option<String>) -> String {
+        if let Some(reason) = custom_reason {
+            reason
+                .replace("{type}", self.actor_type.to_string().as_str())
+                .replace("{id}", self.id.to_string().as_str())
+        } else {
+            format!("Bad Actor {} ({})", self.actor_type, self.id)
+        }
     }
 }
 
