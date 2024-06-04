@@ -2,7 +2,9 @@ use poise::serenity_prelude as serenity;
 use serenity::{CacheHttp, CreateAttachment, CreateEmbed, Mentionable};
 
 use crate::database::controllers::badactor_model_controller::BadActor;
-use crate::database::controllers::serverconfig_model_controller::ServerConfigComplete;
+use crate::database::controllers::serverconfig_model_controller::{
+    ActionLevel, ServerConfigComplete,
+};
 use crate::format;
 use crate::util::logger::Logger;
 
@@ -35,7 +37,7 @@ pub async fn send_broadcast_message(
         &listener.config.server_config,
     );
 
-    let content = get_message_with_pings(broadcast_type.message(), &listener.config, bad_actor);
+    let content = get_message_with_pings(broadcast_type.message(), &listener.config, bad_actor, action_level);
     let message = get_broadcast_message(
         &content,
         embed.clone(),
@@ -62,6 +64,7 @@ fn get_message_with_pings(
     content: &str,
     config: &ServerConfigComplete,
     bad_actor: &BadActor,
+    action_level: ActionLevel,
 ) -> String {
     let reporting_guild = bad_actor.origin_guild_id;
     let current_guild = config.server_config.guild_id;
@@ -69,6 +72,11 @@ fn get_message_with_pings(
     // skip the ping in the originating guild
     if reporting_guild == current_guild {
         return content.to_string();
+    }
+
+    // skip the ping if automatic moderation is already happening
+    if action_level != ActionLevel::Notify {
+        return content.to_string()
     }
 
     let content = if let Some(ping_role) = config.server_config.ping_role {
