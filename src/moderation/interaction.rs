@@ -499,7 +499,7 @@ async fn handle_moderation_success(
     } = options;
 
     let guild_message = format!(
-        "{} took moderation action `{custom_id} against user {} using the broadcast embed buttons.`",
+        "{} took moderation action `{custom_id}` against user {} using the broadcast embed buttons.`",
         format::fdisplay(interaction_user),
         format::fdisplay(target_user)
     );
