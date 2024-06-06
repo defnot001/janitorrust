@@ -420,7 +420,17 @@ pub async fn handle_moderation(cache_http: impl CacheHttp, options: HandleModera
                 .unban(&cache_http.http(), target_user.id)
                 .await
             {
-                moderation_error = Some(anyhow::Error::from(e));
+                if e.to_string() == "Unknown Ban" {
+                    return handle_unknown_ban(
+                        &cache_http,
+                        interaction_guild_id,
+                        &log_channel,
+                        target_user,
+                    )
+                    .await;
+                } else {
+                    moderation_error = Some(anyhow::Error::from(e));
+                }
             }
         }
     }
@@ -479,7 +489,7 @@ async fn handle_moderation_fail(
         .await
     {
         let log_msg = format!(
-            "Failed to inform guild {display_guild} that moderation action `{custom_id}ì for target user {} using the broadcast embed buttons failed",
+            "Failed to inform guild {display_guild} that moderation action `{custom_id} for target user {} using the broadcast embed buttons failed",
             format::fdisplay(target_user)
         );
         Logger::get().error(&cache_http, e, log_msg).await;
@@ -516,6 +526,33 @@ async fn handle_moderation_success(
         let log_msg = format!(
             "Failed to inform guild {display_guild} that moderation action {custom_id} was successfully performed against user {} using the broadcast embed buttons",
             format::fdisplay(target_user)
+        );
+        Logger::get().error(&cache_http, e, log_msg).await;
+    }
+}
+
+async fn handle_unknown_ban(
+    cache_http: impl CacheHttp,
+    interaction_guild_id: GuildId,
+    log_channel: &GuildChannel,
+    target_user: &User,
+) {
+    let guild_message = format!(
+        "Failed to unban user {}. Their ban was not found which most likely means they were not banned in the first place.",
+        format::fdisplay(target_user)
+    );
+
+    if let Err(e) = log_channel
+        .send_message(&cache_http, CreateMessage::default().content(guild_message))
+        .await
+    {
+        let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
+            Ok(g) => format::fdisplay(&g),
+            Err(_) => interaction_guild_id.to_string(),
+        };
+
+        let log_msg = format!(
+            "Failed to inform guild {display_guild} that the unban using the broadcast embed buttons failed because of an unknown ban.",
         );
         Logger::get().error(&cache_http, e, log_msg).await;
     }
