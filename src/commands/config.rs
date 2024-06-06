@@ -72,6 +72,8 @@ async fn update(
     ignored_roles: Option<String>,
     #[description = "Custom ban reason for automatic bans. Add {id} and/or {type} to show them in your reason."]
     ban_reason: Option<String>,
+    #[description = "Timeout users who send messages in your honeypot channel in Minutes. 0 to turn off."]
+    honeypot_timeout: Option<i32>,
 ) -> anyhow::Result<()> {
     ctx.defer().await?;
     assert_user_server!(ctx);
@@ -117,6 +119,8 @@ async fn update(
         None
     };
 
+    let honeypot_timeout_minutes = honeypot_timeout.unwrap_or(0);
+
     let update_values = UpdateServerConfig {
         log_channel_id,
         ping_users,
@@ -127,6 +131,7 @@ async fn update(
         honeypot_action_level,
         ignored_roles,
         ban_reason,
+        honeypot_timeout_minutes,
     };
 
     let updated =

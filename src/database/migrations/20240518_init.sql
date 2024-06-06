@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS server_configs (
     honeypot_channel_id VARCHAR(20),
     honeypot_action_level INT NOT NULL DEFAULT 0,
     ban_reason VARCHAR(512),
+    honeypot_timeout INT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bad_actors (

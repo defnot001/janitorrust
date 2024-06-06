@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use futures::TryFutureExt;
 use poise::serenity_prelude as serenity;
 use serenity::{
@@ -67,6 +67,7 @@ struct DbServerConfig {
     honeypot_channel_id: Option<String>,
     honeypot_action_level: i32,
     ban_reason: Option<String>,
+    honeypot_timeout: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,7 @@ pub struct ServerConfig {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub ban_reason: Option<String>,
+    pub honeypot_timeout: Duration,
 }
 
 impl TryFrom<DbServerConfig> for ServerConfig {
@@ -104,6 +106,7 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             created_at,
             updated_at,
             ban_reason,
+            honeypot_timeout,
         } = db_server_config;
 
         let guild_id = GuildId::from_str(&server_id)?;
@@ -125,6 +128,8 @@ impl TryFrom<DbServerConfig> for ServerConfig {
         let created_at = created_at.and_utc();
         let updated_at = updated_at.and_utc();
 
+        let honeypot_timeout = Duration::minutes(honeypot_timeout as i64);
+
         Ok(ServerConfig {
             guild_id,
             log_channel_id,
@@ -139,6 +144,7 @@ impl TryFrom<DbServerConfig> for ServerConfig {
             created_at,
             updated_at,
             ban_reason,
+            honeypot_timeout,
         })
     }
 }
@@ -230,6 +236,15 @@ impl ServerConfigComplete {
         let created_at = format::display_time(self.server_config.created_at);
         let updated_at = format::display_time(self.server_config.updated_at);
 
+        let honeypot_timeout = if self.server_config.honeypot_timeout.is_zero() {
+            String::from("Not set.")
+        } else {
+            format!(
+                "{} Minutes",
+                self.server_config.honeypot_timeout.num_minutes()
+            )
+        };
+
         embeds::CreateJanitorEmbed::new(interaction_user)
             .into_embed()
             .title(format!("Server Config for {}", &self.guild.name))
@@ -244,6 +259,7 @@ impl ServerConfigComplete {
             .field("Honeypot Action Level", honeypot, false)
             .field("Ignored Roles", ignored_roles, false)
             .field("Custom Ban Reason", ban_reason, false)
+            .field("Honeypot Timeout", honeypot_timeout, false)
             .field("Created At", created_at, false)
             .field("Updated At", updated_at, false)
     }
@@ -259,6 +275,7 @@ pub struct UpdateServerConfig {
     pub honeypot_action_level: Option<ActionLevel>,
     pub ignored_roles: Option<Vec<RoleId>>,
     pub ban_reason: Option<String>,
+    pub honeypot_timeout_minutes: i32,
 }
 
 pub struct ServerConfigModelController;
@@ -394,6 +411,8 @@ impl ServerConfigModelController {
             previous.ban_reason
         };
 
+        let honepot_timeout = update.honeypot_timeout_minutes;
+
         let db_config = sqlx::query_as::<_, DbServerConfig>(
             r#"
             UPDATE server_configs
@@ -406,6 +425,7 @@ impl ServerConfigModelController {
                 honeypot_action_level = $8,
                 ignored_roles = $9,
                 ban_reason = $10,
+                honeypot_timeout = $11,
                 updated_at = now()
             WHERE server_id = $1
             RETURNING *;
@@ -421,6 +441,7 @@ impl ServerConfigModelController {
         .bind(honeypot_action_level)
         .bind(&ignored_roles)
         .bind(ban_reason)
+        .bind(honepot_timeout)
         .fetch_one(pg_pool)
         .await?;
 
