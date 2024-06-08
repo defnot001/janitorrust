@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 use serenity::{
     CacheHttp, CreateActionRow, CreateAttachment, CreateButton, CreateEmbed, CreateMessage,
-    GuildId, PartialGuild, User, UserId,
+    GuildId, PartialGuild, User, UserId, ButtonStyle
 };
 use sqlx::PgPool;
 
@@ -194,8 +194,18 @@ pub fn get_broadcast_message(
         buttons.push(CreateButton::new("ban").label("Ban"));
         buttons.push(CreateButton::new("softban").label("Softban"));
         buttons.push(CreateButton::new("kick").label("Kick"));
+        buttons.push(
+            CreateButton::new("no_action")
+                .label("No Action")
+                .style(ButtonStyle::Danger),
+        )
     } else if broadcast_type == BroadcastType::Deactivate {
         buttons.push(CreateButton::new("unban").label("Unban"));
+        buttons.push(
+            CreateButton::new("no_action")
+                .label("No Action")
+                .style(ButtonStyle::Danger),
+        )
     }
 
     let button_len = buttons.len();

@@ -21,6 +21,7 @@ pub enum CustomId {
     Unban,
     Confirm,
     Cancel,
+    NoAction,
 }
 
 impl FromStr for CustomId {
@@ -34,6 +35,7 @@ impl FromStr for CustomId {
             "unban" => Ok(Self::Unban),
             "confirm" => Ok(Self::Confirm),
             "cancel" => Ok(Self::Cancel),
+            "no_action" => Ok(Self::NoAction),
             _ => anyhow::bail!("Unknown custom id {s}"),
         }
     }
@@ -48,6 +50,7 @@ impl Display for CustomId {
             Self::Unban => write!(f, "unban"),
             Self::Confirm => write!(f, "confirm"),
             Self::Cancel => write!(f, "cancel"),
+            Self::NoAction => write!(f, "no_action"),
         }
     }
 }
@@ -58,6 +61,7 @@ pub enum ModerationCustomId {
     SoftBan,
     Kick,
     Unban,
+    NoAction,
 }
 
 impl Display for ModerationCustomId {
@@ -67,6 +71,7 @@ impl Display for ModerationCustomId {
             Self::SoftBan => write!(f, "softban"),
             Self::Kick => write!(f, "kick"),
             Self::Unban => write!(f, "unban"),
+            Self::NoAction => write!(f, "no_action"),
         }
     }
 }
@@ -80,6 +85,7 @@ impl TryFrom<CustomId> for ModerationCustomId {
             CustomId::SoftBan => Ok(ModerationCustomId::SoftBan),
             CustomId::Kick => Ok(ModerationCustomId::Kick),
             CustomId::Unban => Ok(ModerationCustomId::Unban),
+            CustomId::NoAction => Ok(ModerationCustomId::NoAction),
             _ => anyhow::bail!("custom id `{custom_id}` is not a custom moderation id."),
         }
     }
@@ -151,9 +157,9 @@ async fn handle_button_interaction(
         return Ok(());
     };
 
-    let custom_id = CustomId::from_str(&interaction.data.custom_id)?;
-
-    let Ok(custom_id) = ModerationCustomId::try_from(custom_id) else {
+    let Ok(custom_id) =
+        ModerationCustomId::try_from(CustomId::from_str(&interaction.data.custom_id)?)
+    else {
         return Ok(());
     };
 
@@ -254,7 +260,10 @@ async fn can_moderate(cache_http: impl CacheHttp, options: CanModerateOptions<'_
     };
 
     match custom_id {
-        ModerationCustomId::Ban | ModerationCustomId::SoftBan | ModerationCustomId::Unban => {
+        ModerationCustomId::Ban
+        | ModerationCustomId::SoftBan
+        | ModerationCustomId::Unban
+        | ModerationCustomId::NoAction => {
             if !permissions.ban_members() {
                 let message = format!("Guild member {} tried to use moderation button `{custom_id}` but lacks ban permissions", format::display(&interaction_member.user));
                 tracing::warn!("{message}");
@@ -361,6 +370,10 @@ pub async fn handle_moderation(cache_http: impl CacheHttp, options: HandleModera
         embed,
     } = options;
 
+    if custom_id == ModerationCustomId::NoAction {
+        return;
+    }
+
     let Some(log_channel) = get_log_channel(&cache_http, db_pool, interaction_guild_id).await
     else {
         let display_guild = match interaction_guild_id.to_partial_guild(&cache_http).await {
@@ -432,6 +445,10 @@ pub async fn handle_moderation(cache_http: impl CacheHttp, options: HandleModera
                     moderation_error = Some(anyhow::Error::from(e));
                 }
             }
+        }
+        ModerationCustomId::NoAction => {
+            // Safety: The guard clause at the beginning of this function returns early!
+            unreachable!()
         }
     }
 

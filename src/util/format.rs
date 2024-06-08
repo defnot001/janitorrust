@@ -98,19 +98,19 @@ pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
-pub async fn display_guilds(partial_guilds: &[PartialGuild], use_markdown: bool) -> String {
-    partial_guilds
-        .into_iter()
-        .map(|g| {
-            if use_markdown {
-                fdisplay(g)
-            } else {
-                display(g)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+// pub async fn display_guilds(partial_guilds: &[PartialGuild], use_markdown: bool) -> String {
+//     partial_guilds
+//         .into_iter()
+//         .map(|g| {
+//             if use_markdown {
+//                 fdisplay(g)
+//             } else {
+//                 display(g)
+//             }
+//         })
+//         .collect::<Vec<_>>()
+//         .join("\n")
+// }
 
 pub async fn display_guild_ids(
     cache_http: impl CacheHttp,
