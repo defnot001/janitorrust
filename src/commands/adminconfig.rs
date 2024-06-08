@@ -6,7 +6,7 @@ use crate::database::controllers::serverconfig_model_controller::{
     ServerConfigComplete, ServerConfigModelController,
 };
 use crate::util::embeds::CreateJanitorEmbed;
-use crate::util::format;
+use crate::util::format::display_guild_ids;
 use crate::util::random_utils::parse_guild_ids;
 use crate::util::screenshot::FileManager;
 use crate::AppContext;
@@ -72,19 +72,11 @@ async fn display_config_guilds(ctx: AppContext<'_>) -> anyhow::Result<()> {
     assert_admin_server!(ctx);
 
     let guild_ids = ServerConfigModelController::get_all_guild_ids(&ctx.data().db_pool).await?;
-    let iter = guild_ids.into_iter().map(|g| g.to_partial_guild(ctx));
-    let joined = futures::future::try_join_all(iter).await?;
-
-    let display_guilds = joined
-        .into_iter()
-        .map(|g| format::fdisplay(&g))
-        .collect::<Vec<_>>()
-        .join("\n");
 
     let embed = CreateJanitorEmbed::new(ctx.author())
         .into_embed()
         .title("Servers with Janitor config")
-        .description(display_guilds);
+        .description(display_guild_ids(&ctx, &guild_ids, true).await?);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
 
@@ -103,20 +95,10 @@ async fn display_guilds(ctx: AppContext<'_>) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let guild_ids = cache.guilds();
-    let iter = guild_ids.into_iter().map(|g| g.to_partial_guild(ctx));
-    let joined = futures::future::try_join_all(iter).await?;
-
-    let display_guilds = joined
-        .into_iter()
-        .map(|g| format::fdisplay(&g))
-        .collect::<Vec<_>>()
-        .join("\n");
-
     let embed = CreateJanitorEmbed::new(ctx.author())
         .into_embed()
         .title("Servers Janitor is in")
-        .description(display_guilds);
+        .description(display_guild_ids(&ctx, &cache.guilds(), true).await?);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
 

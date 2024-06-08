@@ -1,7 +1,20 @@
 use std::borrow::Cow;
 
 use poise::serenity_prelude as serenity;
-use serenity::{PartialGuild, User, UserId};
+use serenity::{CacheHttp, GuildId, PartialGuild, User, UserId};
+
+use super::random_utils::get_guilds;
+
+#[allow(dead_code)]
+pub enum TimestampStyle {
+    ShortTime,
+    LongTime,
+    ShortDate,
+    LongDate,
+    ShortDateTime,
+    LongDateTime,
+    Relative,
+}
 
 pub trait HasNameAndID {
     fn name(&self) -> &str;
@@ -85,13 +98,37 @@ pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
-#[allow(dead_code)]
-pub enum TimestampStyle {
-    ShortTime,
-    LongTime,
-    ShortDate,
-    LongDate,
-    ShortDateTime,
-    LongDateTime,
-    Relative,
+pub async fn display_guilds(partial_guilds: &[PartialGuild], use_markdown: bool) -> String {
+    partial_guilds
+        .into_iter()
+        .map(|g| {
+            if use_markdown {
+                fdisplay(g)
+            } else {
+                display(g)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub async fn display_guild_ids(
+    cache_http: impl CacheHttp,
+    guild_ids: &[GuildId],
+    use_markdown: bool,
+) -> anyhow::Result<String> {
+    let display_guilds = get_guilds(guild_ids, &cache_http)
+        .await?
+        .iter()
+        .map(|g| {
+            if use_markdown {
+                fdisplay(g)
+            } else {
+                display(g)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(display_guilds)
 }
