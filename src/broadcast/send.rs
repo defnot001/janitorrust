@@ -37,7 +37,12 @@ pub async fn send_broadcast_message(
         &listener.config.server_config,
     );
 
-    let content = get_message_with_pings(broadcast_type.message(), &listener.config, bad_actor, action_level);
+    let content = get_message_with_pings(
+        broadcast_type.message(),
+        &listener.config,
+        bad_actor,
+        action_level,
+    );
     let message = get_broadcast_message(
         &content,
         embed.clone(),
@@ -76,7 +81,7 @@ fn get_message_with_pings(
 
     // skip the ping if automatic moderation is already happening
     if action_level != ActionLevel::Notify {
-        return content.to_string()
+        return content.to_string();
     }
 
     let content = if let Some(ping_role) = config.server_config.ping_role {

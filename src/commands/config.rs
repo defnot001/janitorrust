@@ -2,13 +2,13 @@ use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{ChannelType, CreateMessage, GuildChannel, Role};
 
+use crate::assert_user_server;
 use crate::database::controllers::serverconfig_model_controller::{
     ActionLevel, ServerConfigComplete, ServerConfigModelController, UpdateServerConfig,
 };
 use crate::util::logger::Logger;
-use crate::util::random_utils;
+use crate::util::parsing::parse_role_ids;
 use crate::AppContext;
-use crate::{assert_user_server, oops};
 
 /// Subcommands for server configs.
 #[poise::command(
@@ -40,7 +40,8 @@ async fn display(ctx: AppContext<'_>) -> anyhow::Result<()> {
         ServerConfigModelController::get_by_guild_id(&ctx.data().db_pool, guild_id).await?
     else {
         let user_msg = "Your server doesn't have a config in the database!";
-        oops!(ctx, user_msg);
+        ctx.say(user_msg).await?;
+        return Ok(());
     };
 
     let embed = ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx)
@@ -89,11 +90,7 @@ async fn update(
         }
     }
 
-    let ignored_roles = if let Some(r) = ignored_roles {
-        Some(random_utils::parse_role_ids(&r)?)
-    } else {
-        None
-    };
+    let ignored_roles = ignored_roles.map(|r| parse_role_ids(&r)).transpose()?;
 
     let log_channel_id = log_channel.map(|c| c.id);
     let ping_role = ping_role.map(|r| r.id);

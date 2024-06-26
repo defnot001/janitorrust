@@ -15,13 +15,15 @@ pub async fn adminlist(ctx: AppContext<'_>) -> anyhow::Result<()> {
             .into_iter()
             .map(|a| a.into_user(ctx)),
     )
-    .await?
-    .into_iter()
-    .map(|u| format::fdisplay(&u))
-    .collect::<Vec<String>>()
-    .join("\n");
+    .await?;
 
-    ctx.say(users).await?;
+    let display_users = users
+        .iter()
+        .map(format::fdisplay)
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    ctx.say(display_users).await?;
 
     Ok(())
 }

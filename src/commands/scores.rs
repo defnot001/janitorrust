@@ -1,12 +1,14 @@
+use std::str::FromStr;
+
+use ::serenity::all::CacheHttp;
 use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{CreateEmbed, GuildId, User};
+use sqlx::PgPool;
 
 use crate::assert_user;
-use crate::database::controllers::scores_model_controller::{
-    GuildScoreboard, ScoresModelController, UserScoreboard,
-};
-use crate::util::{embeds, format, random_utils};
+use crate::database::controllers::scores_model_controller::ScoresModelController;
+use crate::util::{embeds, format};
 use crate::AppContext;
 
 #[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
@@ -35,10 +37,7 @@ async fn server(
     assert_user!(ctx);
     ctx.defer().await?;
 
-    let guild = GuildId::from(random_utils::parse_snowflake(&server_id)?)
-        .to_partial_guild(ctx)
-        .await?;
-
+    let guild = GuildId::from_str(&server_id)?.to_partial_guild(ctx).await?;
     let scores = ScoresModelController::get_guild_score(&ctx.data().db_pool, guild.id).await?;
 
     if scores.score == 0 {
@@ -101,85 +100,52 @@ async fn leaderboard(
     assert_user!(ctx);
     ctx.defer().await?;
 
-    let embed = match scoreboard_type {
-        ScoreboardType::Users => {
-            let scores = ScoresModelController::get_top_users(&ctx.data().db_pool, 10).await?;
-            build_user_leaderboard(scores, ctx.author(), ctx).await?
-        }
-        ScoreboardType::Servers => {
-            let scores = ScoresModelController::get_top_guilds(&ctx.data().db_pool, 10).await?;
-            build_guilds_leaderboard(scores, ctx.author(), ctx).await?
-        }
-    };
-
-    let Some(embed) = embed else {
-        ctx.say("There are no reports to show yet.").await?;
-        return Ok(());
-    };
-
+    let embed = build_leaderboard(&ctx, &ctx.data().db_pool, ctx.author(), scoreboard_type).await?;
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
 }
 
-async fn build_user_leaderboard(
-    scores: Vec<UserScoreboard>,
+async fn build_leaderboard(
+    cache_http: impl CacheHttp,
+    db_pool: &PgPool,
     interaction_user: &User,
-    ctx: AppContext<'_>,
-) -> anyhow::Result<Option<CreateEmbed>> {
-    let mut leaderboard = Vec::with_capacity(scores.len());
+    scoreboard_type: ScoreboardType,
+) -> anyhow::Result<CreateEmbed> {
+    let mut leaderboard: Vec<String> = Vec::new();
+
+    let scores = match scoreboard_type {
+        ScoreboardType::Users => ScoresModelController::get_top_users(db_pool, 10).await?,
+        ScoreboardType::Servers => ScoresModelController::get_top_guilds(db_pool, 10).await?,
+    };
 
     for (i, s) in scores.into_iter().enumerate() {
-        let user = s.user_id.to_user(ctx).await?;
-
         if s.score == 0 {
             continue;
         }
 
-        leaderboard.push(format!(
-            "{}. {}: `{}`",
-            i + 1,
-            format::user_mention(&user.id),
-            s.score
-        ))
+        let display_user_or_guild = match scoreboard_type {
+            ScoreboardType::Users => format!("<@{}>", s.id),
+            ScoreboardType::Servers => {
+                let guild_res = GuildId::from(s.id).to_partial_guild(&cache_http).await;
+                match guild_res {
+                    Ok(guild) => guild.name,
+                    Err(_) => s.id.to_string(),
+                }
+            }
+        };
+
+        leaderboard.push(format!("{}. {}: {}", i + 1, display_user_or_guild, s.score))
     }
 
-    if leaderboard.is_empty() {
-        return Ok(None);
-    }
+    let title = match scoreboard_type {
+        ScoreboardType::Users => "Top 10 Users with the most reports",
+        ScoreboardType::Servers => "Top 10 Servers with the most reports",
+    };
 
     let embed = embeds::CreateJanitorEmbed::new(interaction_user)
         .into_embed()
-        .title("Top 10 Users with the most reports")
+        .title(title)
         .description(leaderboard.join("\n"));
 
-    Ok(Some(embed))
-}
-
-async fn build_guilds_leaderboard(
-    scores: Vec<GuildScoreboard>,
-    interaction_user: &User,
-    ctx: AppContext<'_>,
-) -> anyhow::Result<Option<CreateEmbed>> {
-    let mut leaderboard = Vec::with_capacity(scores.len());
-
-    for (i, s) in scores.into_iter().enumerate() {
-        let guild = s.guild_id.to_partial_guild(ctx).await?;
-
-        if s.score == 0 {
-            continue;
-        }
-
-        leaderboard.push(format!("{}. {}: `{}`", i + 1, guild.name, s.score));
-    }
-
-    if leaderboard.is_empty() {
-        return Ok(None);
-    }
-
-    let embed = embeds::CreateJanitorEmbed::new(interaction_user)
-        .into_embed()
-        .title("Top 10 Guilds with the most reports")
-        .description(leaderboard.join("\n"));
-
-    Ok(Some(embed))
+    Ok(embed)
 }

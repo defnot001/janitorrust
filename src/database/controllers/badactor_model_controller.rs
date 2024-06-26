@@ -10,7 +10,7 @@ use serenity::{
 use sqlx::{FromRow, PgPool};
 
 use crate::util::embeds::EmbedColor;
-use crate::util::{format, random_utils, screenshot};
+use crate::util::{format, screenshot};
 use crate::Logger;
 
 #[derive(Debug, Copy, Clone)]
@@ -138,7 +138,7 @@ impl BadActor {
             .color(colour)
             .timestamp(Utc::now())
             .field("Report ID", self.id.to_string(), true)
-            .field("Active", random_utils::display_bool(self.is_active), true)
+            .field("Active", format::display_bool(self.is_active), true)
             .field("Type", self.actor_type.to_string(), true)
             .field("Explanation", explanation, false)
             .field("Server of Origin", display_guild, false)

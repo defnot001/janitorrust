@@ -1,8 +1,9 @@
 use poise::serenity_prelude as serenity;
 use serenity::{Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, User};
 
-use crate::util::random_utils;
 use crate::AppContext;
+
+use super::format;
 
 #[derive(Default, Copy, Clone, poise::ChoiceParameter)]
 pub enum EmbedColor {
@@ -66,7 +67,7 @@ impl CreateJanitorEmbed {
     /// Tries to set the bot as an author for the embed and attempts to put its avatar as the author icon.
     /// If something fails, the embed won't have an author.
     pub async fn bot_author(self, ctx: AppContext<'_>) -> Self {
-        let Some(bot_user) = random_utils::get_bot_user(ctx).await else {
+        let Some(bot_user) = ctx.framework().bot_id.to_user(&ctx).await.ok() else {
             return self;
         };
 
@@ -75,7 +76,7 @@ impl CreateJanitorEmbed {
             .unwrap_or(bot_user.default_avatar_url());
 
         let embed_author =
-            CreateEmbedAuthor::new(random_utils::username(&bot_user)).icon_url(icon_url);
+            CreateEmbedAuthor::new(format::display_username(&bot_user)).icon_url(icon_url);
 
         Self(self.0.author(embed_author))
     }

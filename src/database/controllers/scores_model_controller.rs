@@ -1,8 +1,16 @@
-use std::str::FromStr;
+use std::num::NonZeroU64;
 
 use poise::serenity_prelude as serenity;
 use serenity::{GuildId, UserId};
 use sqlx::{prelude::FromRow, PgPool};
+
+use crate::util::discord::parse_snowflake;
+
+#[derive(Debug)]
+pub struct Scoreboard {
+    pub id: NonZeroU64,
+    pub score: u32,
+}
 
 #[derive(Debug, FromRow)]
 struct DbUserScoreboard {
@@ -10,20 +18,14 @@ struct DbUserScoreboard {
     score: i32,
 }
 
-#[derive(Debug)]
-pub struct UserScoreboard {
-    pub user_id: UserId,
-    pub score: u32,
-}
-
-impl TryFrom<DbUserScoreboard> for UserScoreboard {
+impl TryFrom<DbUserScoreboard> for Scoreboard {
     type Error = anyhow::Error;
 
     fn try_from(db_user_scoreboard: DbUserScoreboard) -> Result<Self, Self::Error> {
-        let user_id = UserId::from_str(&db_user_scoreboard.discord_id)?;
+        let id = parse_snowflake(&db_user_scoreboard.discord_id)?;
         let score = db_user_scoreboard.score as u32;
 
-        Ok(UserScoreboard { user_id, score })
+        Ok(Scoreboard { id, score })
     }
 }
 
@@ -33,20 +35,14 @@ struct DbGuildScoreboard {
     score: i32,
 }
 
-#[derive(Debug)]
-pub struct GuildScoreboard {
-    pub guild_id: GuildId,
-    pub score: u32,
-}
-
-impl TryFrom<DbGuildScoreboard> for GuildScoreboard {
+impl TryFrom<DbGuildScoreboard> for Scoreboard {
     type Error = anyhow::Error;
 
     fn try_from(db_guild_scoreboard: DbGuildScoreboard) -> Result<Self, Self::Error> {
-        let guild_id = GuildId::from_str(&db_guild_scoreboard.guild_id)?;
+        let id = parse_snowflake(&db_guild_scoreboard.guild_id)?;
         let score = db_guild_scoreboard.score as u32;
 
-        Ok(GuildScoreboard { guild_id, score })
+        Ok(Scoreboard { id, score })
     }
 }
 
@@ -94,7 +90,7 @@ impl ScoresModelController {
         Ok(())
     }
 
-    pub async fn get_top_users(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<UserScoreboard>> {
+    pub async fn get_top_users(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<Scoreboard>> {
         let db_top_users = sqlx::query_as::<_, DbUserScoreboard>(
             r#"
             SELECT * FROM user_scores
@@ -108,14 +104,11 @@ impl ScoresModelController {
 
         db_top_users
             .into_iter()
-            .map(UserScoreboard::try_from)
-            .collect::<Result<Vec<UserScoreboard>, _>>()
+            .map(Scoreboard::try_from)
+            .collect::<Result<Vec<Scoreboard>, _>>()
     }
 
-    pub async fn get_top_guilds(
-        db_pool: &PgPool,
-        limit: u8,
-    ) -> anyhow::Result<Vec<GuildScoreboard>> {
+    pub async fn get_top_guilds(db_pool: &PgPool, limit: u8) -> anyhow::Result<Vec<Scoreboard>> {
         let db_top_guilds = sqlx::query_as::<_, DbGuildScoreboard>(
             r#"
             SELECT * FROM guild_scores
@@ -129,14 +122,11 @@ impl ScoresModelController {
 
         db_top_guilds
             .into_iter()
-            .map(GuildScoreboard::try_from)
-            .collect::<Result<Vec<GuildScoreboard>, _>>()
+            .map(Scoreboard::try_from)
+            .collect::<Result<Vec<Scoreboard>, _>>()
     }
 
-    pub async fn get_user_score(
-        db_pool: &PgPool,
-        user_id: UserId,
-    ) -> anyhow::Result<UserScoreboard> {
+    pub async fn get_user_score(db_pool: &PgPool, user_id: UserId) -> anyhow::Result<Scoreboard> {
         let db_score = sqlx::query_as::<_, DbUserScoreboard>(
             "SELECT * FROM user_scores WHERE discord_id = $1;",
         )
@@ -144,16 +134,22 @@ impl ScoresModelController {
         .fetch_optional(db_pool)
         .await?;
 
+        let non_zero =
+            NonZeroU64::new(user_id.get()).ok_or(anyhow::anyhow!("User Id cannot be zero"))?;
+
         match db_score {
             Some(db_score) => db_score.try_into(),
-            None => Ok(UserScoreboard { score: 0, user_id }),
+            None => Ok(Scoreboard {
+                score: 0,
+                id: non_zero,
+            }),
         }
     }
 
     pub async fn get_guild_score(
         db_pool: &PgPool,
         guild_id: GuildId,
-    ) -> anyhow::Result<GuildScoreboard> {
+    ) -> anyhow::Result<Scoreboard> {
         let db_score = sqlx::query_as::<_, DbGuildScoreboard>(
             "SELECT * FROM guild_scores WHERE guild_id = $1;",
         )
@@ -161,9 +157,15 @@ impl ScoresModelController {
         .fetch_optional(db_pool)
         .await?;
 
+        let non_zero =
+            NonZeroU64::new(guild_id.get()).ok_or(anyhow::anyhow!("User Id cannot be zero"))?;
+
         match db_score {
             Some(db_score) => db_score.try_into(),
-            None => Ok(GuildScoreboard { score: 0, guild_id }),
+            None => Ok(Scoreboard {
+                score: 0,
+                id: non_zero,
+            }),
         }
     }
 }

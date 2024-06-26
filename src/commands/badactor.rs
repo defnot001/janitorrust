@@ -18,7 +18,6 @@ use crate::database::controllers::badactor_model_controller::{
 };
 use crate::database::controllers::scores_model_controller::ScoresModelController;
 use crate::util::embeds::EmbedColor;
-use crate::util::random_utils;
 use crate::util::{embeds, format, locks, screenshot};
 use crate::{AppContext, Logger};
 
@@ -607,7 +606,10 @@ fn get_check_user_reply(ctx: AppContext<'_>, target_user: &User) -> CreateReply 
     let bad_actor_user_embed = embeds::CreateJanitorEmbed::new(ctx.author())
         .avatar_thumbnail(target_user)
         .into_embed()
-        .title(format!("Info User {}", random_utils::username(target_user)))
+        .title(format!(
+            "Info User {}",
+            format::display_username(target_user)
+        ))
         .field("ID", target_user.id.to_string(), false)
         .field("Created At", created_at, false);
 

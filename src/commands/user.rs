@@ -7,7 +7,9 @@ use crate::database::controllers::serverconfig_model_controller::ServerConfigMod
 use crate::database::controllers::user_model_controller::CreateJanitorUser;
 use crate::database::controllers::user_model_controller::{UserModelController, UserType};
 use crate::honeypot::channels::HoneypotChannels;
-use crate::util::{embeds, format, random_utils};
+use crate::util::discord::get_entities;
+use crate::util::parsing::parse_guild_ids;
+use crate::util::{embeds, format};
 use crate::{assert_admin, assert_admin_server};
 use crate::{AppContext, Logger};
 
@@ -40,7 +42,7 @@ async fn list(
         .map(|u| u.user_id)
         .collect::<Vec<UserId>>();
 
-    let display_users = random_utils::get_users(user_ids, &ctx)
+    let display_users = get_entities(&ctx, &user_ids)
         .await?
         .iter()
         .map(format::display)
@@ -79,7 +81,7 @@ async fn info(
         return Ok(());
     };
 
-    let guilds = random_utils::get_guilds(&db_user.guild_ids, &ctx).await?;
+    let guilds = get_entities(&ctx, &db_user.guild_ids).await?;
     let embed = db_user.to_embed(ctx.author(), &user, &guilds);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
@@ -100,8 +102,8 @@ async fn add(
     assert_admin_server!(ctx);
     ctx.defer().await?;
 
-    let guild_ids = random_utils::parse_guild_ids(&servers)?;
-    let guilds = random_utils::get_guilds(&guild_ids, &ctx).await?;
+    let guild_ids = parse_guild_ids(&servers)?;
+    let guilds = get_entities(&ctx, &guild_ids).await?;
 
     let create_user = CreateJanitorUser {
         guild_ids: &guild_ids,
@@ -145,7 +147,7 @@ async fn update(
     ctx.defer().await?;
 
     let new_guild_ids = if let Some(servers) = servers {
-        let parsed = random_utils::parse_guild_ids(&servers)?;
+        let parsed = parse_guild_ids(&servers)?;
         Some(parsed)
     } else {
         None
@@ -165,7 +167,7 @@ async fn update(
 
     let updated_user_type = user_type.unwrap_or(old_user.user_type);
     let updated_ids = new_guild_ids.unwrap_or(old_user.guild_ids.clone());
-    let updated_guilds = random_utils::get_guilds(&updated_ids, &ctx).await?;
+    let updated_guilds = get_entities(&ctx, &updated_ids).await?;
 
     let create_user = CreateJanitorUser {
         user_id: user.id,

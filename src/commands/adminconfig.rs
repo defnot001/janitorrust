@@ -7,7 +7,7 @@ use crate::database::controllers::serverconfig_model_controller::{
 };
 use crate::util::embeds::CreateJanitorEmbed;
 use crate::util::format::display_guild_ids;
-use crate::util::random_utils::parse_guild_ids;
+use crate::util::parsing::parse_guild_ids;
 use crate::util::screenshot::FileManager;
 use crate::AppContext;
 use crate::{assert_admin, assert_admin_server};
@@ -41,19 +41,22 @@ async fn display_configs(
 
     let guild_ids = parse_guild_ids(&guild_id)?;
 
-    let configs =
+    let async_iter =
         ServerConfigModelController::get_multiple_by_guild_id(&ctx.data().db_pool, &guild_ids)
-            .await?;
+            .await?
+            .into_iter()
+            .map(|c| async {
+                let config =
+                    ServerConfigComplete::try_from_server_config(c, &ctx.data().db_pool, &ctx)
+                        .await;
 
-    let mut embeds = Vec::with_capacity(guild_ids.len());
+                match config {
+                    Ok(c) => Ok(c.to_embed(ctx.author())),
+                    Err(e) => anyhow::bail!(e),
+                }
+            });
 
-    for config in configs {
-        embeds.push(
-            ServerConfigComplete::try_from_server_config(config, &ctx.data().db_pool, &ctx)
-                .await?
-                .to_embed(ctx.author()),
-        );
-    }
+    let embeds = futures::future::try_join_all(async_iter).await?;
 
     let reply = CreateReply {
         embeds,

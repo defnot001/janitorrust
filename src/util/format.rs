@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
 use poise::serenity_prelude as serenity;
-use serenity::{CacheHttp, GuildId, PartialGuild, User, UserId};
+use serenity::{CacheHttp, GuildId, PartialGuild, User};
 
-use super::random_utils::get_guilds;
+use super::discord::get_entities;
 
 #[allow(dead_code)]
 pub enum TimestampStyle {
@@ -57,10 +57,6 @@ pub fn inline_code(input: impl Into<String>) -> String {
     format!("`{}`", input.into())
 }
 
-pub fn user_mention(user: &UserId) -> String {
-    format!("<@{}>", user)
-}
-
 pub fn escape_markdown(input: impl Into<String>) -> String {
     let input = input.into();
     let mut output = String::with_capacity(input.len());
@@ -98,6 +94,19 @@ pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
+pub fn display_bool(boolean: bool) -> &'static str {
+    if boolean {
+        "Yes"
+    } else {
+        "No"
+    }
+}
+
+/// Tries to display the User's global name and gets the username if they don't have one.
+pub fn display_username(user: &User) -> &str {
+    user.global_name.as_ref().unwrap_or(&user.name)
+}
+
 // pub async fn display_guilds(partial_guilds: &[PartialGuild], use_markdown: bool) -> String {
 //     partial_guilds
 //         .into_iter()
@@ -112,12 +121,14 @@ pub fn display_time(date_time: chrono::DateTime<chrono::Utc>) -> String {
 //         .join("\n")
 // }
 
+/// Turns a slice of GuildIds into a list string with the format `guildName (guildId)\n`
+/// use_markdown should be used when displaying them in the discord client
 pub async fn display_guild_ids(
     cache_http: impl CacheHttp,
     guild_ids: &[GuildId],
     use_markdown: bool,
 ) -> anyhow::Result<String> {
-    let display_guilds = get_guilds(guild_ids, &cache_http)
+    let display_guilds = get_entities(&cache_http, guild_ids)
         .await?
         .iter()
         .map(|g| {

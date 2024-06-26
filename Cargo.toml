@@ -32,3 +32,4 @@ simd-json = "0.13"
 dashmap = "5.5"
 futures = "0.3.30"
 url = { version = "2.5.0", features = ["serde"] }
+async-trait = "0.1.80"

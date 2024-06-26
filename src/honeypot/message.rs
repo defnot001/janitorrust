@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use poise::{serenity_prelude as serenity, FrameworkContext};
 use serenity::{
-    Cache, CacheHttp, Context, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
-    GuildChannel, GuildId, Message, PartialGuild, Timestamp, User, UserId,
+    Cache, CacheHttp, ChannelId, Context, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
+    CreateMessage, GuildChannel, GuildId, Message, PartialGuild, Timestamp, User, UserId,
 };
 use sqlx::PgPool;
 use tokio::sync::{Mutex, MutexGuard};
@@ -27,6 +27,7 @@ pub type Queue = Arc<Mutex<Vec<HoneypotMessage>>>;
 pub struct HoneypotMessage {
     pub guild_id: GuildId,
     pub user_id: UserId,
+    pub channel_id: ChannelId,
     pub content: String,
     pub timestamp: Instant,
     pub is_in_honeypot: bool,
@@ -74,6 +75,7 @@ pub async fn handle_message(
         user_id: msg.author.id,
         content: msg.content.clone(),
         is_in_honeypot,
+        channel_id: msg.channel_id,
         timestamp: now,
     };
 
@@ -126,7 +128,10 @@ fn should_report(queue: &MutexGuard<'_, Vec<HoneypotMessage>>, new_msg: &Honeypo
     let mut is_any_in_honeypot = new_msg.is_in_honeypot;
 
     for queue_msg in queue.iter() {
-        if queue_msg.user_id == new_msg.user_id && queue_msg.content == new_msg.content {
+        if queue_msg.user_id == new_msg.user_id
+            && queue_msg.content == new_msg.content
+            && queue_msg.channel_id != new_msg.channel_id
+        {
             equal_msg_content += 1;
             is_any_in_honeypot |= queue_msg.is_in_honeypot;
         }
@@ -411,17 +416,12 @@ pub async fn get_log_channel(
         return None;
     };
 
-    let Some(log_channel_id) = server_config.log_channel_id else {
-        return None;
-    };
-
-    let Ok(log_channel) = log_channel_id.to_channel(&cache_http).await else {
-        return None;
-    };
-
-    let Some(guild_channel) = log_channel.guild() else {
-        return None;
-    };
+    let guild_channel = server_config
+        .log_channel_id?
+        .to_channel(&cache_http)
+        .await
+        .ok()?
+        .guild()?;
 
     if !guild_channel.is_text_based() {
         return None;

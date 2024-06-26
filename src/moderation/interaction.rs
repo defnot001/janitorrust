@@ -287,10 +287,7 @@ async fn can_moderate(cache_http: impl CacheHttp, options: CanModerateOptions<'_
 fn get_broadcast_embed(interaction: &ComponentInteraction) -> Option<Embed> {
     let embeds = interaction.message.embeds.clone();
 
-    let Some(first_embed) = embeds.into_iter().next() else {
-        return None;
-    };
-
+    let first_embed = embeds.into_iter().next()?;
     let fields_len = first_embed.fields.len();
 
     let expected_field_names = [
