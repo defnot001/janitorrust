@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -124,20 +125,22 @@ fn remove_old_messages(
 }
 
 fn should_report(queue: &MutexGuard<'_, Vec<HoneypotMessage>>, new_msg: &HoneypotMessage) -> bool {
-    let mut equal_msg_content: usize = 0;
     let mut is_any_in_honeypot = new_msg.is_in_honeypot;
 
+    let mut seen_channel_ids = Vec::with_capacity(3);
+
+    seen_channel_ids.push(new_msg.channel_id);
+
     for queue_msg in queue.iter() {
-        if queue_msg.user_id == new_msg.user_id
-            && queue_msg.content == new_msg.content
-            && queue_msg.channel_id != new_msg.channel_id
-        {
-            equal_msg_content += 1;
-            is_any_in_honeypot |= queue_msg.is_in_honeypot;
+        if queue_msg.user_id == new_msg.user_id && queue_msg.content == new_msg.content {
+            if !seen_channel_ids.contains(&queue_msg.channel_id) {
+                is_any_in_honeypot |= queue_msg.is_in_honeypot;
+                seen_channel_ids.push(queue_msg.channel_id);
+            }
         }
     }
 
-    equal_msg_content >= 2 && is_any_in_honeypot
+    seen_channel_ids.len() >= 3 && is_any_in_honeypot
 }
 
 async fn maybe_report_bad_actor(

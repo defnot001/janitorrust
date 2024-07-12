@@ -127,6 +127,7 @@ async fn build_leaderboard(
             ScoreboardType::Users => format!("<@{}>", s.id),
             ScoreboardType::Servers => {
                 let guild_res = GuildId::from(s.id).to_partial_guild(&cache_http).await;
+
                 match guild_res {
                     Ok(guild) => guild.name,
                     Err(_) => s.id.to_string(),
